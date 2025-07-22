@@ -128,9 +128,6 @@
 
         .caption-overlay {
             position: absolute;
-            bottom: 60px;
-            left: 50%;
-            transform: translateX(-50%);
             background: rgba(0,0,0,0.8);
             color: white;
             padding: 12px 24px;
@@ -138,13 +135,17 @@
             font-size: 18px;
             font-weight: 500;
             max-width: 80%;
+            min-width: 100px;
             text-align: center;
             word-wrap: break-word;
-            transition: all 0.3s ease;
             z-index: 10;
             cursor: move;
             user-select: none;
             border: 2px solid transparent;
+            box-sizing: border-box;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
         .caption-overlay:hover {
@@ -154,6 +155,7 @@
         .caption-overlay.dragging {
             border-color: #ff6b35;
             box-shadow: 0 4px 12px rgba(255,107,53,0.3);
+            transition: none;
         }
 
         .timeline-container {
@@ -830,35 +832,54 @@
                 const overlay = document.getElementById('captionOverlay');
                 
                 overlay.addEventListener('mousedown', (e) => {
-                    if (!this.currentCaption) return;
+                    // Only allow dragging if there's a current caption being displayed
+                    const currentDisplayedCaption = this.captions.find(caption => 
+                        this.currentTime >= caption.start && this.currentTime <= caption.end
+                    );
+                    
+                    if (!currentDisplayedCaption) return;
                     
                     this.isDraggingCaption = true;
                     overlay.classList.add('dragging');
                     
                     const videoContainer = document.querySelector('.video-container');
                     const rect = videoContainer.getBoundingClientRect();
+                    const overlayRect = overlay.getBoundingClientRect();
                     
-                    const offsetX = e.clientX - (rect.left + (this.currentCaption.positionX || 50) * rect.width / 100);
-                    const offsetY = e.clientY - (rect.top + (this.currentCaption.positionY || 80) * rect.height / 100);
+                    // Calculate offset from mouse to overlay center
+                    const offsetX = e.clientX - (overlayRect.left + overlayRect.width / 2);
+                    const offsetY = e.clientY - (overlayRect.top + overlayRect.height / 2);
                     
                     const onMouseMove = (e) => {
                         if (!this.isDraggingCaption) return;
                         
                         const rect = videoContainer.getBoundingClientRect();
-                        const x = ((e.clientX - rect.left - offsetX) / rect.width) * 100;
-                        const y = ((e.clientY - rect.top - offsetY) / rect.height) * 100;
                         
-                        const clampedX = Math.max(0, Math.min(100, x));
-                        const clampedY = Math.max(0, Math.min(100, y));
+                        // Calculate new position relative to video container
+                        const centerX = e.clientX - offsetX;
+                        const centerY = e.clientY - offsetY;
                         
-                        this.currentCaption.positionX = clampedX;
-                        this.currentCaption.positionY = clampedY;
+                        const x = ((centerX - rect.left) / rect.width) * 100;
+                        const y = ((centerY - rect.top) / rect.height) * 100;
                         
-                        // Update form fields
-                        document.getElementById('positionX').value = Math.round(clampedX);
-                        document.getElementById('positionY').value = Math.round(clampedY);
+                        // Clamp position to stay within video bounds
+                        const clampedX = Math.max(10, Math.min(90, x));
+                        const clampedY = Math.max(10, Math.min(90, y));
                         
-                        this.updateCaptionPosition();
+                        // Update only the currently displayed caption's position
+                        currentDisplayedCaption.positionX = clampedX;
+                        currentDisplayedCaption.positionY = clampedY;
+                        
+                        // Apply position immediately to overlay
+                        overlay.style.left = `${clampedX}%`;
+                        overlay.style.top = `${clampedY}%`;
+                        overlay.style.transform = 'translate(-50%, -50%)';
+                        
+                        // Update form fields if this caption is currently selected
+                        if (this.currentCaption && this.currentCaption.id === currentDisplayedCaption.id) {
+                            document.getElementById('positionX').value = Math.round(clampedX);
+                            document.getElementById('positionY').value = Math.round(clampedY);
+                        }
                     };
                     
                     const onMouseUp = () => {
@@ -866,12 +887,18 @@
                         overlay.classList.remove('dragging');
                         document.removeEventListener('mousemove', onMouseMove);
                         document.removeEventListener('mouseup', onMouseUp);
+                        
+                        // If we're dragging a caption that's not currently selected, select it
+                        if (this.currentCaption && this.currentCaption.id !== currentDisplayedCaption.id) {
+                            this.selectCaption(currentDisplayedCaption);
+                        }
                     };
                     
                     document.addEventListener('mousemove', onMouseMove);
                     document.addEventListener('mouseup', onMouseUp);
                     
                     e.preventDefault();
+                    e.stopPropagation();
                 });
             }
 
@@ -1093,12 +1120,16 @@
             selectCaption(caption) {
                 this.currentCaption = caption;
                 
-                // Update form fields
+                // Update form fields with this caption's specific values
                 document.getElementById('captionText').value = caption.text;
                 document.getElementById('startTime').value = caption.start.toFixed(1);
                 document.getElementById('endTime').value = caption.end.toFixed(1);
-                document.getElementById('positionX').value = caption.positionX || 50;
-                document.getElementById('positionY').value = caption.positionY || 80;
+                document.getElementById('positionX').value = caption.positionX !== undefined ? caption.positionX : 50;
+                document.getElementById('positionY').value = caption.positionY !== undefined ? caption.positionY : 80;
+                
+                // Ensure the caption has position values if they don't exist
+                if (caption.positionX === undefined) caption.positionX = 50;
+                if (caption.positionY === undefined) caption.positionY = 80;
                 
                 // Update visual selection
                 document.querySelectorAll('.caption-segment').forEach(el => {
@@ -1112,9 +1143,6 @@
                 if (segmentEl) {
                     segmentEl.classList.add('selected');
                 }
-                
-                // Update caption position
-                this.updateCaptionPosition();
             }
 
             updateCaption() {
