@@ -13,7 +13,7 @@
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #667eea;
             color: #333;
             min-height: 100vh;
             overflow-x: hidden;
@@ -60,18 +60,18 @@
             margin: 40px;
             transition: all 0.3s ease;
             cursor: pointer;
-            background: linear-gradient(45deg, #f8f9ff, #e8ecff);
+            background: #f8f9ff;
         }
 
         .upload-area:hover {
             border-color: #764ba2;
-            background: linear-gradient(45deg, #e8ecff, #f8f9ff);
+            background: #e8ecff;
             transform: translateY(-2px);
         }
 
         .upload-area.drag-over {
             border-color: #4CAF50;
-            background: linear-gradient(45deg, #e8f5e8, #f0f8f0);
+            background: #e8f5e8;
             transform: scale(1.02);
         }
 
@@ -142,13 +142,58 @@
             word-wrap: break-word;
             transition: all 0.3s ease;
             z-index: 10;
+            cursor: move;
+            user-select: none;
+            border: 2px solid transparent;
+        }
+
+        .caption-overlay:hover {
+            border-color: #667eea;
+        }
+
+        .caption-overlay.dragging {
+            border-color: #ff6b35;
+            box-shadow: 0 4px 12px rgba(255,107,53,0.3);
         }
 
         .timeline-container {
-            height: 150px;
+            height: 180px;
             background: #2c3e50;
             padding: 20px;
             overflow-x: auto;
+        }
+
+        .timeline-wrapper {
+            position: relative;
+            margin-bottom: 20px;
+        }
+
+        .timeline-markers {
+            position: relative;
+            height: 20px;
+            margin-bottom: 5px;
+        }
+
+        .time-marker {
+            position: absolute;
+            top: 0;
+            width: 2px;
+            height: 20px;
+            background: rgba(255,255,255,0.3);
+        }
+
+        .time-marker.major {
+            height: 20px;
+            background: rgba(255,255,255,0.6);
+        }
+
+        .time-label {
+            position: absolute;
+            top: -18px;
+            font-size: 10px;
+            color: rgba(255,255,255,0.7);
+            transform: translateX(-50%);
+            font-family: monospace;
         }
 
         .timeline {
@@ -156,8 +201,12 @@
             height: 60px;
             background: #34495e;
             border-radius: 10px;
-            margin-bottom: 20px;
             cursor: pointer;
+            border: 2px solid transparent;
+        }
+
+        .timeline:hover {
+            border-color: #667eea;
         }
 
         .timeline-progress {
@@ -165,7 +214,7 @@
             top: 0;
             left: 0;
             height: 100%;
-            background: linear-gradient(90deg, #667eea, #764ba2);
+            background: #667eea;
             border-radius: 10px;
             transition: width 0.1s ease;
         }
@@ -473,7 +522,7 @@
 
         .export-btn {
             width: 100%;
-            background: linear-gradient(135deg, #667eea, #764ba2);
+            background: #667eea;
             color: white;
             border: none;
             padding: 15px;
@@ -485,6 +534,7 @@
         }
 
         .export-btn:hover {
+            background: #5a6fd8;
             transform: translateY(-2px);
             box-shadow: 0 10px 20px rgba(102,126,234,0.3);
         }
@@ -538,9 +588,12 @@
                     </div>
 
                     <div class="timeline-container">
-                        <div class="timeline" id="timeline">
-                            <div class="timeline-progress" id="timelineProgress"></div>
-                            <div class="playhead" id="playhead"></div>
+                        <div class="timeline-wrapper">
+                            <div class="timeline-markers" id="timelineMarkers"></div>
+                            <div class="timeline" id="timeline">
+                                <div class="timeline-progress" id="timelineProgress"></div>
+                                <div class="playhead" id="playhead"></div>
+                            </div>
                         </div>
                         <div class="caption-segments" id="captionSegments"></div>
                     </div>
@@ -582,6 +635,19 @@
                             <div class="form-group">
                                 <label class="form-label">End Time (seconds)</label>
                                 <input type="number" class="form-input" id="endTime" step="0.1" min="0">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Position</label>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                                    <div>
+                                        <label style="font-size: 12px; color: #666;">X Position (%)</label>
+                                        <input type="number" class="form-input" id="positionX" min="0" max="100" value="50">
+                                    </div>
+                                    <div>
+                                        <label style="font-size: 12px; color: #666;">Y Position (%)</label>
+                                        <input type="number" class="form-input" id="positionY" min="0" max="100" value="80">
+                                    </div>
+                                </div>
                             </div>
                             <button class="control-btn" id="updateCaptionBtn" style="width: 100%;">
                                 Update Caption
@@ -673,6 +739,8 @@
                 this.isPlaying = false;
                 this.duration = 0;
                 this.currentTime = 0;
+                this.isDraggingCaption = false;
+                this.isDraggingPlayhead = false;
                 
                 this.init();
             }
@@ -680,6 +748,7 @@
             init() {
                 this.setupEventListeners();
                 this.setupDragAndDrop();
+                this.setupCaptionDragging();
             }
 
             setupEventListeners() {
@@ -698,9 +767,13 @@
                 document.getElementById('updateCaptionBtn').addEventListener('click', this.updateCaption.bind(this));
                 document.getElementById('deleteCaptionBtn').addEventListener('click', this.deleteCaption.bind(this));
 
+                // Position controls
+                document.getElementById('positionX').addEventListener('input', this.updateCaptionPosition.bind(this));
+                document.getElementById('positionY').addEventListener('input', this.updateCaptionPosition.bind(this));
+
                 // Timeline
                 document.getElementById('timeline').addEventListener('click', this.seekToTime.bind(this));
-                document.getElementById('playhead').addEventListener('mousedown', this.startDragging.bind(this));
+                document.getElementById('playhead').addEventListener('mousedown', this.startDraggingPlayhead.bind(this));
 
                 // Style controls
                 document.getElementById('fontSize').addEventListener('input', this.updateStyle.bind(this));
@@ -753,6 +826,55 @@
                 }
             }
 
+            setupCaptionDragging() {
+                const overlay = document.getElementById('captionOverlay');
+                
+                overlay.addEventListener('mousedown', (e) => {
+                    if (!this.currentCaption) return;
+                    
+                    this.isDraggingCaption = true;
+                    overlay.classList.add('dragging');
+                    
+                    const videoContainer = document.querySelector('.video-container');
+                    const rect = videoContainer.getBoundingClientRect();
+                    
+                    const offsetX = e.clientX - (rect.left + (this.currentCaption.positionX || 50) * rect.width / 100);
+                    const offsetY = e.clientY - (rect.top + (this.currentCaption.positionY || 80) * rect.height / 100);
+                    
+                    const onMouseMove = (e) => {
+                        if (!this.isDraggingCaption) return;
+                        
+                        const rect = videoContainer.getBoundingClientRect();
+                        const x = ((e.clientX - rect.left - offsetX) / rect.width) * 100;
+                        const y = ((e.clientY - rect.top - offsetY) / rect.height) * 100;
+                        
+                        const clampedX = Math.max(0, Math.min(100, x));
+                        const clampedY = Math.max(0, Math.min(100, y));
+                        
+                        this.currentCaption.positionX = clampedX;
+                        this.currentCaption.positionY = clampedY;
+                        
+                        // Update form fields
+                        document.getElementById('positionX').value = Math.round(clampedX);
+                        document.getElementById('positionY').value = Math.round(clampedY);
+                        
+                        this.updateCaptionPosition();
+                    };
+                    
+                    const onMouseUp = () => {
+                        this.isDraggingCaption = false;
+                        overlay.classList.remove('dragging');
+                        document.removeEventListener('mousemove', onMouseMove);
+                        document.removeEventListener('mouseup', onMouseUp);
+                    };
+                    
+                    document.addEventListener('mousemove', onMouseMove);
+                    document.addEventListener('mouseup', onMouseUp);
+                    
+                    e.preventDefault();
+                });
+            }
+
             loadVideo(file) {
                 const videoURL = URL.createObjectURL(file);
                 this.video = document.getElementById('videoPlayer');
@@ -761,8 +883,58 @@
                 this.video.addEventListener('loadedmetadata', () => {
                     this.duration = this.video.duration;
                     this.setupVideoEvents();
+                    this.createTimelineMarkers();
                     this.showEditor();
                 });
+            }
+
+            createTimelineMarkers() {
+                const markersContainer = document.getElementById('timelineMarkers');
+                markersContainer.innerHTML = '';
+                
+                const duration = this.duration;
+                const intervals = this.getTimeIntervals(duration);
+                
+                intervals.forEach(time => {
+                    const marker = document.createElement('div');
+                    marker.className = time % 60 === 0 ? 'time-marker major' : 'time-marker';
+                    
+                    const percentage = (time / duration) * 100;
+                    marker.style.left = `${percentage}%`;
+                    
+                    if (time % 10 === 0 || time % 60 === 0) {
+                        const label = document.createElement('div');
+                        label.className = 'time-label';
+                        label.textContent = this.formatTime(time);
+                        label.style.left = `${percentage}%`;
+                        markersContainer.appendChild(label);
+                    }
+                    
+                    markersContainer.appendChild(marker);
+                });
+            }
+
+            getTimeIntervals(duration) {
+                const intervals = [];
+                
+                if (duration <= 60) {
+                    // For videos under 1 minute, show every 5 seconds
+                    for (let i = 0; i <= duration; i += 5) {
+                        intervals.push(i);
+                    }
+                } else if (duration <= 300) {
+                    // For videos under 5 minutes, show every 10 seconds
+                    for (let i = 0; i <= duration; i += 10) {
+                        intervals.push(i);
+                    }
+                } else {
+                    // For longer videos, show every 30 seconds
+                    for (let i = 0; i <= duration; i += 30) {
+                        intervals.push(i);
+                    }
+                }
+                
+                return intervals;
             }
 
             setupVideoEvents() {
@@ -825,11 +997,14 @@
                 this.video.currentTime = newTime;
             }
 
-            startDragging(e) {
+            startDraggingPlayhead(e) {
                 e.preventDefault();
+                this.isDraggingPlayhead = true;
                 const timeline = document.getElementById('timeline');
                 
                 const onMouseMove = (e) => {
+                    if (!this.isDraggingPlayhead) return;
+                    
                     const rect = timeline.getBoundingClientRect();
                     const x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
                     const percentage = x / rect.width;
@@ -837,12 +1012,28 @@
                 };
                 
                 const onMouseUp = () => {
+                    this.isDraggingPlayhead = false;
                     document.removeEventListener('mousemove', onMouseMove);
                     document.removeEventListener('mouseup', onMouseUp);
                 };
                 
                 document.addEventListener('mousemove', onMouseMove);
                 document.addEventListener('mouseup', onMouseUp);
+            }
+
+            updateCaptionPosition() {
+                if (!this.currentCaption) return;
+                
+                const positionX = parseFloat(document.getElementById('positionX').value);
+                const positionY = parseFloat(document.getElementById('positionY').value);
+                
+                this.currentCaption.positionX = positionX;
+                this.currentCaption.positionY = positionY;
+                
+                const overlay = document.getElementById('captionOverlay');
+                overlay.style.left = `${positionX}%`;
+                overlay.style.top = `${positionY}%`;
+                overlay.style.transform = 'translate(-50%, -50%)';
             }
 
             async startTranscription() {
@@ -886,7 +1077,9 @@
                     id: Date.now(),
                     start: startTime,
                     end: endTime,
-                    text: "New caption text"
+                    text: "New caption text",
+                    positionX: 50,
+                    positionY: 80
                 };
                 
                 this.captions.push(newCaption);
@@ -904,6 +1097,8 @@
                 document.getElementById('captionText').value = caption.text;
                 document.getElementById('startTime').value = caption.start.toFixed(1);
                 document.getElementById('endTime').value = caption.end.toFixed(1);
+                document.getElementById('positionX').value = caption.positionX || 50;
+                document.getElementById('positionY').value = caption.positionY || 80;
                 
                 // Update visual selection
                 document.querySelectorAll('.caption-segment').forEach(el => {
@@ -917,6 +1112,9 @@
                 if (segmentEl) {
                     segmentEl.classList.add('selected');
                 }
+                
+                // Update caption position
+                this.updateCaptionPosition();
             }
 
             updateCaption() {
@@ -925,10 +1123,13 @@
                 this.currentCaption.text = document.getElementById('captionText').value;
                 this.currentCaption.start = parseFloat(document.getElementById('startTime').value);
                 this.currentCaption.end = parseFloat(document.getElementById('endTime').value);
+                this.currentCaption.positionX = parseFloat(document.getElementById('positionX').value);
+                this.currentCaption.positionY = parseFloat(document.getElementById('positionY').value);
                 
                 this.captions.sort((a, b) => a.start - b.start);
                 this.renderCaptionSegments();
                 this.updateCaptionList();
+                this.updateCaptionPosition();
             }
 
             deleteCaption() {
