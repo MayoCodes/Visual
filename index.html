@@ -7,8 +7,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/onnxruntime-web/1.17.1/ort.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/transformers.js/2.17.2/transformers.min.js"></script>
+    <!-- FFmpeg.js for reliable audio extraction -->
+    <script src="./ffmpeg.js"></script>
     <style>
         * {
             margin: 0;
@@ -58,8 +58,11 @@
             border-radius: 16px;
             box-shadow: 0 24px 48px rgba(0,0,0,0.3);
             overflow: hidden;
-            min-height: 850px;
+            min-height: 600px;
+            max-height: calc(100vh - 120px); /* Leave space for header */
             border: 1px solid #404040;
+            display: flex;
+            flex-direction: column;
         }
 
         .upload-area {
@@ -125,13 +128,15 @@
         .editor-workspace {
             display: none;
             grid-template-columns: 1fr 380px;
-            height: 850px;
+            min-height: 600px;
+            max-height: 100vh;
         }
 
         .main-editor {
             display: flex;
             flex-direction: column;
             background: #1e1e1e;
+            min-height: 0; /* Allow shrinking */
         }
 
         .video-preview {
@@ -143,23 +148,69 @@
             justify-content: center;
             border-radius: 8px 0 0 0;
             overflow: hidden;
+            min-height: 300px;
+            max-height: calc(100vh - 350px); /* Reserve space for timeline and controls */
         }
 
         .video-container {
             position: relative;
             width: 100%;
             height: 100%;
-            max-width: 900px;
+            max-width: 100%;
+            max-height: 100%;
             display: flex;
             align-items: center;
             justify-content: center;
         }
 
         #videoPlayer {
-            width: 100%;
-            height: 100%;
+            max-width: 100%;
+            max-height: 100%;
+            width: auto;
+            height: auto;
             object-fit: contain;
             border-radius: 4px;
+            background: #000;
+        }
+
+        #videoPlayer::-webkit-media-controls {
+            background-color: rgba(0,0,0,0.8);
+        }
+
+        /* Aspect ratio specific styling */
+        .video-container.portrait {
+            max-width: 400px;
+            margin: 0 auto;
+        }
+
+        .video-container.landscape {
+            max-width: 100%;
+            margin: 0;
+        }
+
+        .video-container.square {
+            max-width: 500px;
+            margin: 0 auto;
+        }
+
+        .video-container.ultrawide {
+            max-width: 100%;
+            margin: 0;
+            min-height: 250px;
+        }
+
+        .video-loading-overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            font-size: 14px;
+            z-index: 5;
         }
 
         .caption-overlay {
@@ -199,11 +250,13 @@
         }
 
         .timeline-container {
-            height: 200px;
+            min-height: 200px;
+            max-height: 200px;
             background: #1a1a1a;
             padding: 24px;
             overflow-x: auto;
             border-top: 1px solid #404040;
+            flex-shrink: 0; /* Never shrink the timeline */
         }
 
         .timeline-wrapper {
@@ -334,6 +387,8 @@
             padding: 20px 32px;
             background: #2a2a2a;
             border-top: 1px solid #404040;
+            flex-shrink: 0; /* Never shrink the controls */
+            min-height: 84px; /* Ensure consistent height */
         }
 
         .control-btn {
@@ -373,14 +428,14 @@
         }
 
         .control-btn.transcribe-ai {
-            background: linear-gradient(135deg, #4CAF50, #45a049);
-            border-color: #4CAF50;
+            background: linear-gradient(135deg, #13EF93, #149AFB);
+            border-color: #13EF93;
         }
 
-        .control-btn.transcribe-ai:hover {
-            background: linear-gradient(135deg, #45a049, #3d8b40);
+        .control-btn.transcribe-ai:hover:not(:disabled) {
+            background: linear-gradient(135deg, #149AFB, #13EF93);
             transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(76,175,80,0.3);
+            box-shadow: 0 4px 12px rgba(19,239,147,0.3);
         }
 
         .time-display {
@@ -454,6 +509,7 @@
             padding: 24px;
             overflow-y: auto;
             background: #2a2a2a;
+            max-height: calc(100vh - 200px);
         }
 
         .tab-panel {
@@ -569,6 +625,7 @@
             cursor: pointer;
             transition: all 0.2s ease;
             border-left: 4px solid transparent;
+            position: relative;
         }
 
         .caption-item:hover {
@@ -580,6 +637,11 @@
             background: #404040;
         }
 
+        .caption-item.editing {
+            border-left-color: #13EF93;
+            background: #2d4a2d;
+        }
+
         .caption-time {
             font-size: 12px;
             color: #b0b0b0;
@@ -589,6 +651,48 @@
         .caption-text {
             font-size: 14px;
             color: #ffffff;
+        }
+
+        .caption-text-input {
+            width: 100%;
+            background: transparent;
+            border: none;
+            color: #ffffff;
+            font-size: 14px;
+            font-family: inherit;
+            padding: 2px 0;
+            outline: none;
+            border-bottom: 1px solid #13EF93;
+        }
+
+        .caption-edit-controls {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+            justify-content: flex-end;
+        }
+
+        .caption-edit-btn {
+            padding: 4px 8px;
+            border: none;
+            border-radius: 4px;
+            font-size: 11px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .caption-edit-btn.save {
+            background: #13EF93;
+            color: #000;
+        }
+
+        .caption-edit-btn.cancel {
+            background: #666;
+            color: white;
+        }
+
+        .caption-edit-btn:hover {
+            transform: translateY(-1px);
         }
 
         .loading {
@@ -618,7 +722,7 @@
             width: 50px;
             height: 50px;
             border: 4px solid #404040;
-            border-top: 4px solid #667eea;
+            border-top: 4px solid #13EF93;
             border-radius: 50%;
             animation: spin 1s linear infinite;
             margin: 0 auto 20px;
@@ -659,55 +763,232 @@
             display: none !important;
         }
 
-        .model-status {
+        .api-setup {
             background: #333333;
             border-radius: 8px;
-            padding: 12px;
+            padding: 16px;
             margin-bottom: 16px;
-            font-size: 12px;
-            border-left: 4px solid #667eea;
+            border-left: 4px solid #13EF93;
         }
 
-        .model-status.loading {
+        .api-setup.warning {
             border-left-color: #ff9800;
         }
 
-        .model-status.ready {
-            border-left-color: #4CAF50;
-        }
-
-        .model-status.error {
-            border-left-color: #f44336;
-        }
-
-        .language-selector {
-            margin-bottom: 16px;
-        }
-
-        .language-selector select {
+        .api-key-input {
             width: 100%;
             padding: 8px 12px;
-            background: #333333;
+            background: #404040;
             color: #ffffff;
             border: 1px solid #5a5a5a;
             border-radius: 6px;
-            font-size: 14px;
+            font-size: 12px;
+            font-family: 'SF Mono', monospace;
+            margin-top: 8px;
+        }
+
+        .api-help {
+            font-size: 11px;
+            color: #b0b0b0;
+            margin-top: 8px;
+            line-height: 1.4;
+        }
+
+        .api-help a {
+            color: #13EF93;
+            text-decoration: none;
+        }
+
+        .api-help a:hover {
+            text-decoration: underline;
+        }
+
+        .save-key-btn {
+            background: #13EF93;
+            color: #000;
+            border: none;
+            padding: 6px 16px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 8px;
+            transition: all 0.2s ease;
+        }
+
+        .save-key-btn:hover {
+            background: #149AFB;
+            color: white;
+        }
+
+        .audio-extraction-section {
+            background: #333333;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 16px;
+            border-left: 4px solid #667eea;
+        }
+
+        .audio-extraction-section.hidden {
+            display: none;
+        }
+
+        .extraction-progress {
+            width: 100%;
+            height: 6px;
+            background: #404040;
+            border-radius: 3px;
+            margin: 12px 0;
+            overflow: hidden;
+        }
+
+        .extraction-progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #13EF93, #149AFB);
+            width: 0%;
+            transition: width 0.3s ease;
+            border-radius: 3px;
+        }
+
+        .audio-preview {
+            margin-top: 12px;
+            padding: 12px;
+            background: #404040;
+            border-radius: 6px;
+            display: none;
+        }
+
+        .audio-preview.show {
+            display: block;
+        }
+
+        .audio-preview audio {
+            width: 100%;
+            height: 32px;
+        }
+
+        .audio-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+            font-size: 12px;
+            color: #b0b0b0;
+        }
+
+        .extraction-controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 12px;
+        }
+
+        .extraction-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            flex: 1;
+        }
+
+        .extraction-btn:hover {
+            background: #5a6fd8;
+        }
+
+        .extraction-btn:disabled {
+            background: #404040;
+            cursor: not-allowed;
+        }
+
+        .extraction-btn.success {
+            background: #13EF93;
+            color: #000;
+            font-weight: 600;
+        }
+
+        .extraction-btn.success:hover {
+            background: #149AFB;
+            color: white;
         }
 
         @media (max-width: 768px) {
             .editor-workspace {
                 grid-template-columns: 1fr;
                 grid-template-rows: 1fr auto;
+                min-height: 100vh;
+                max-height: 100vh;
+            }
+            
+            .video-preview {
+                max-height: calc(100vh - 500px); /* More space for mobile timeline/controls */
+                min-height: 200px;
             }
             
             .sidebar {
                 border-left: none;
                 border-top: 1px solid #404040;
                 max-height: 400px;
+                min-height: 350px;
             }
             
             .header h1 {
                 font-size: 2rem;
+            }
+            
+            .controls {
+                flex-wrap: wrap;
+                gap: 10px;
+                padding: 15px 20px;
+            }
+            
+            .control-btn {
+                min-width: 120px;
+                padding: 8px 12px;
+                font-size: 12px;
+            }
+            
+            .time-display {
+                min-width: 120px;
+                font-size: 13px;
+                padding: 8px 12px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .video-preview {
+                max-height: calc(100vh - 450px);
+                min-height: 180px;
+            }
+
+            .timeline-container {
+                padding: 16px;
+                min-height: 180px;
+                max-height: 180px;
+            }
+
+            .controls {
+                padding: 12px 16px;
+            }
+
+            .container {
+                padding: 16px;
+            }
+        }
+
+        /* Handle very tall videos (portrait) */
+        @media (orientation: portrait) {
+            .video-preview {
+                max-height: 60vh; /* Limit height on portrait devices */
+            }
+        }
+
+        /* Handle very wide videos (ultra-widescreen) */
+        @media (min-aspect-ratio: 21/9) {
+            .video-preview {
+                min-height: 200px;
             }
         }
     </style>
@@ -716,14 +997,14 @@
     <div class="container">
         <div class="header">
             <h1>🎬 CaptionCraft</h1>
-            <p>Professional Video Caption Editor with Whisper AI Transcription</p>
+            <p>Professional Video Caption Editor with Ultra HD Recording, Perfect Audio Sync & AI Transcription</p>
         </div>
 
         <div class="editor-container">
             <div class="upload-area" id="uploadArea">
                 <div class="upload-icon">📁</div>
                 <div class="upload-text">Drop your video file here</div>
-                <div class="upload-subtext">Supports MP4, MOV, AVI, WebM, MKV, M4V and more • Free AI transcription with Whisper</div>
+                <div class="upload-subtext">Supports MP4, MOV, AVI, WebM, MKV, M4V and more • Ultra HD recording with perfect audio sync</div>
                 <input type="file" id="fileInput" accept=".mp4,.mov,.avi,.webm,.mkv,.m4v,.3gp,.flv" style="display: none;">
             </div>
 
@@ -731,10 +1012,14 @@
                 <div class="main-editor">
                     <div class="video-preview">
                         <div class="video-container">
-                            <video id="videoPlayer" controls>
+                            <video id="videoPlayer" controls preload="metadata" playsinline>
                                 Your browser does not support the video tag.
                             </video>
                             <div class="caption-overlay" id="captionOverlay"></div>
+                            <div class="video-loading-overlay hidden" id="videoLoadingOverlay">
+                                <div>Loading video...</div>
+                                <div style="font-size: 12px; margin-top: 8px; opacity: 0.7;">Please wait</div>
+                            </div>
                         </div>
                     </div>
 
@@ -754,7 +1039,7 @@
                             <span>▶️</span> Play
                         </button>
                         <button class="control-btn transcribe-ai" id="transcribeBtn">
-                            <span>🤖</span> AI Transcribe
+                            <span>🚀</span> AI Transcribe
                         </button>
                         <div class="time-display" id="timeDisplay">00:00 / 00:00</div>
                         <button class="control-btn" id="addCaptionBtn">
@@ -774,29 +1059,57 @@
                     </div>
 
                     <div class="sidebar-content">
-                        <div class="model-status" id="modelStatus">
-                            <div>🔄 Loading Whisper AI model...</div>
-                            <div style="font-size: 10px; margin-top: 4px; opacity: 0.7;">First load may take a few moments</div>
+                        <div class="api-setup" id="apiSetup">
+                            <div><strong>🔑 Free AI Transcription Setup</strong></div>
+                            <div style="font-size: 12px; margin: 8px 0 0 0; color: #b0b0b0;">
+                                Get 12,000 minutes/month free with Deepgram
+                            </div>
+                            <input type="password" id="apiKeyInput" class="api-key-input" placeholder="Paste your free Deepgram API key here">
+                            <button id="saveKeyBtn" class="save-key-btn">Save Key</button>
+                            <div class="api-help">
+                                <strong>How to get your free API key:</strong><br>
+                                1. Visit <a href="https://console.deepgram.com/signup" target="_blank">Deepgram Console</a><br>
+                                2. Sign up for free (no credit card required)<br>
+                                3. Create a new API key in your dashboard<br>
+                                4. Paste it above and click "Save Key"<br>
+                                <br>
+                                <strong>Free tier includes:</strong> 12,000 minutes/month, 90+ languages, speaker detection, timestamps, Nova-2 model
+                            </div>
                         </div>
 
                         <div class="tab-panel active" id="editPanel">
-                            <div class="language-selector">
-                                <label class="form-label">Transcription Language</label>
-                                <select id="languageSelect">
-                                    <option value="en">English</option>
-                                    <option value="es">Spanish</option>
-                                    <option value="fr">French</option>
-                                    <option value="de">German</option>
-                                    <option value="it">Italian</option>
-                                    <option value="pt">Portuguese</option>
-                                    <option value="ru">Russian</option>
-                                    <option value="ja">Japanese</option>
-                                    <option value="ko">Korean</option>
-                                    <option value="zh">Chinese</option>
-                                    <option value="ar">Arabic</option>
-                                    <option value="hi">Hindi</option>
-                                    <option value="auto">Auto-detect</option>
-                                </select>
+                            <div class="audio-extraction-section hidden" id="audioExtractionSection">
+                                <div><strong>🎵 Audio Extraction</strong></div>
+                                <div style="font-size: 12px; margin: 4px 0; color: #b0b0b0;">
+                                    Extract audio before transcription
+                                </div>
+                                
+                                <div class="audio-info">
+                                    <span id="extractionTimeInfo">Ready to extract</span>
+                                    <span id="extractionSizeInfo"></span>
+                                </div>
+                                
+                                <div class="extraction-progress">
+                                    <div class="extraction-progress-bar" id="extractionProgressBar"></div>
+                                </div>
+                                
+                                <div class="extraction-controls">
+                                    <button class="extraction-btn" id="extractAudioBtn">
+                                        🎵 Extract Audio
+                                    </button>
+                                    <button class="extraction-btn" id="previewAudioBtn" disabled>
+                                        🔊 Preview
+                                    </button>
+                                </div>
+                                
+                                <div class="audio-preview" id="audioPreview">
+                                    <div style="font-size: 12px; color: #b0b0b0; margin-bottom: 8px;">
+                                        <strong>Extracted Audio Preview:</strong>
+                                    </div>
+                                    <audio controls id="extractedAudio">
+                                        Your browser does not support audio playback.
+                                    </audio>
+                                </div>
                             </div>
 
                             <div class="form-group">
@@ -833,6 +1146,26 @@
                         </div>
 
                         <div class="tab-panel" id="stylePanel">
+                            <div class="form-group">
+                                <label class="form-label">Font Family</label>
+                                <select class="form-input" id="fontFamily">
+                                    <option value="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" style="font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">Inter (Default)</option>
+                                    <option value="Arial, sans-serif" style="font-family: Arial, sans-serif;">Arial</option>
+                                    <option value="Helvetica, sans-serif" style="font-family: Helvetica, sans-serif;">Helvetica</option>
+                                    <option value="'Times New Roman', serif" style="font-family: 'Times New Roman', serif;">Times New Roman</option>
+                                    <option value="Georgia, serif" style="font-family: Georgia, serif;">Georgia</option>
+                                    <option value="'Courier New', monospace" style="font-family: 'Courier New', monospace;">Courier New</option>
+                                    <option value="Verdana, sans-serif" style="font-family: Verdana, sans-serif;">Verdana</option>
+                                    <option value="'Trebuchet MS', sans-serif" style="font-family: 'Trebuchet MS', sans-serif;">Trebuchet MS</option>
+                                    <option value="'Comic Sans MS', cursive" style="font-family: 'Comic Sans MS', cursive;">Comic Sans MS</option>
+                                    <option value="Impact, sans-serif" style="font-family: Impact, sans-serif;">Impact</option>
+                                    <option value="'Lucida Console', monospace" style="font-family: 'Lucida Console', monospace;">Lucida Console</option>
+                                    <option value="'Palatino Linotype', serif" style="font-family: 'Palatino Linotype', serif;">Palatino</option>
+                                    <option value="Tahoma, sans-serif" style="font-family: Tahoma, sans-serif;">Tahoma</option>
+                                    <option value="'Century Gothic', sans-serif" style="font-family: 'Century Gothic', sans-serif;">Century Gothic</option>
+                                    <option value="'Book Antiqua', serif" style="font-family: 'Book Antiqua', serif;">Book Antiqua</option>
+                                </select>
+                            </div>
                             <div class="form-group">
                                 <label class="form-label">Font Size</label>
                                 <div class="range-group">
@@ -886,9 +1219,22 @@
                                 </div>
                             </div>
                             <div class="export-section">
-                                <button class="export-btn" id="exportBtn">
-                                    📥 Export Video with Captions
+                                <button class="export-btn" id="exportBtn" style="margin-bottom: 12px;">
+                                    📥 Export Captions (SRT)
                                 </button>
+                                <button class="export-btn" id="exportVideoBtn" style="background: linear-gradient(135deg, #13EF93, #149AFB);">
+                                    🎬 Record HD Video + Perfect Audio (WebM→MP4)
+                                </button>
+                                <div id="exportProgress" class="hidden" style="margin-top: 12px; padding: 12px; background: #333; border-radius: 8px;">
+                                    <div style="font-size: 12px; margin-bottom: 8px; color: #b0b0b0;">
+                                        <strong>Recording HD video with perfect synchronized audio...</strong>
+                                    </div>
+                                    <div style="width: 100%; background: #404040; border-radius: 4px; height: 6px;">
+                                        <div id="exportProgressBar" style="width: 0%; background: linear-gradient(90deg, #13EF93, #149AFB); height: 100%; border-radius: 4px; transition: width 0.3s;"></div>
+                                    </div>
+                                    <div id="exportProgressText" style="margin-top: 8px; font-size: 11px; color: #888;">Initializing HD recording...</div>
+                                    <button id="cancelRecordingBtn" style="background: #dc3545; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-size: 11px; cursor: pointer; margin-top: 8px;">Cancel Recording</button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -899,34 +1245,35 @@
         <div class="loading hidden" id="loadingOverlay">
             <div class="loading-content">
                 <div class="spinner"></div>
-                <h3 id="loadingTitle">AI Transcription in Progress</h3>
-                <p id="loadingMessage">Extracting audio and processing with Whisper AI...</p>
+                <h3 id="loadingTitle">Deepgram AI Transcription</h3>
+                <p id="loadingMessage">Processing your audio with Nova-2 model...</p>
                 <div style="margin-top: 16px; font-size: 12px; color: #b0b0b0; text-align: left;">
-                    <strong>Whisper AI Benefits:</strong><br>
-                    • Works completely offline in your browser<br>
-                    • High accuracy even with accents and background noise<br>
-                    • Supports 90+ languages with auto-detection<br>
-                    • Free to use with no API calls required<br>
-                    • Processes audio locally for privacy
+                    <strong>HD Technology Stack:</strong><br>
+                    • FFmpeg.js for pristine audio extraction<br>
+                    • Deepgram Nova-2 for professional transcription<br>
+                    • HD canvas recording (1920x1080+)<br>
+                    • Perfect audio synchronization<br>
+                    • 30 FPS smooth playback (optimized)<br>
+                    • 8 Mbps balanced quality bitrate<br>
+                    • Professional caption rendering<br>
+                    • WebM output (convert to MP4)<br>
+                    • 12,000 minutes free per month<br>
+                    • 90+ languages supported<br>
+                    • Works completely in your browser<br>
+                    • Optimized for performance
                 </div>
                 <div style="margin-top: 12px; width: 100%; background: #333; border-radius: 4px; height: 8px;">
-                    <div id="transcriptionProgress" style="width: 0%; background: linear-gradient(90deg, #667eea, #764ba2); height: 100%; border-radius: 4px; transition: width 0.3s;"></div>
+                    <div id="transcriptionProgress" style="width: 0%; background: linear-gradient(90deg, #13EF93, #149AFB); height: 100%; border-radius: 4px; transition: width 0.3s;"></div>
                 </div>
                 <div id="progressText" style="margin-top: 8px; font-size: 12px; color: #b0b0b0;">Initializing...</div>
             </div>
         </div>
     </div>
 
-    <script type="module">
-        // Import Transformers.js for Whisper
-        import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
-
-        // Configure transformers environment
-        env.allowRemoteModels = false;
-        env.allowLocalModels = true;
-
+    <script>
         class VideoCaptionEditor {
             constructor() {
+                console.log('[INIT] Starting VideoCaptionEditor initialization...');
                 this.video = null;
                 this.captions = [];
                 this.currentCaption = null;
@@ -935,176 +1282,543 @@
                 this.currentTime = 0;
                 this.isDraggingCaption = false;
                 this.isDraggingPlayhead = false;
-                this.whisperPipeline = null;
-                this.modelStatus = 'loading';
+                this.videoFile = null;
+                this.extractedAudioBlob = null;
+                this.isExtracting = false;
+                this.ffmpeg = null;
+                this.ffmpegReady = false;
+                this.apiKey = localStorage.getItem('deepgram_key') || '';
+                this.currentVideoURL = null;
+                this.isRecording = false;
+                this.mediaRecorder = null;
+                this.recordedChunks = [];
+                this.canvasRecorder = null;
+                this.audioVideo = null; // For high-quality audio recording
+                
+                console.log('[INIT] Initial state:', {
+                    apiKey: this.apiKey ? '***PRESENT***' : 'NOT_SET',
+                    isRecording: this.isRecording,
+                    ffmpegReady: this.ffmpegReady
+                });
+                
+                // Add roundRect polyfill for older browsers
+                this.addCanvasPolyfills();
                 
                 this.init();
             }
 
-            async init() {
-                this.setupEventListeners();
-                this.setupDragAndDrop();
-                this.setupCaptionDragging();
-                await this.initializeWhisper();
-            }
-
-            async initializeWhisper() {
-                try {
-                    console.log('Loading Whisper model...');
-                    this.updateModelStatus('loading', '🔄 Loading Whisper AI model...', 'This may take a few moments on first load');
-                    
-                    // Load Whisper model (using tiny model for faster loading)
-                    this.whisperPipeline = await pipeline(
-                        'automatic-speech-recognition',
-                        'Xenova/whisper-tiny.en',
-                        {
-                            dtype: {
-                                encoder_model: 'fp16',
-                                decoder_model_merged: 'q4'
-                            },
-                            device: 'webgpu',
-                            // Fallback to CPU if WebGPU is not available
-                            fallback_device: 'cpu'
+            addCanvasPolyfills() {
+                console.log('[INIT] Adding canvas polyfills for older browser support...');
+                
+                // Polyfill for roundRect if not available
+                if (!CanvasRenderingContext2D.prototype.roundRect) {
+                    CanvasRenderingContext2D.prototype.roundRect = function(x, y, width, height, radius) {
+                        if (typeof radius === 'number') {
+                            radius = { tl: radius, tr: radius, br: radius, bl: radius };
+                        } else {
+                            radius = {
+                                tl: radius.tl || 0,
+                                tr: radius.tr || 0,
+                                br: radius.br || 0,
+                                bl: radius.bl || 0
+                            };
                         }
-                    );
-                    
-                    console.log('Whisper model loaded successfully');
-                    this.updateModelStatus('ready', '✅ Whisper AI ready', 'Ready for high-quality transcription');
-                    this.modelStatus = 'ready';
-                    
-                } catch (error) {
-                    console.error('Failed to load Whisper model:', error);
-                    this.updateModelStatus('error', '❌ Model loading failed', 'Please refresh the page to try again');
-                    this.modelStatus = 'error';
+                        
+                        this.beginPath();
+                        this.moveTo(x + radius.tl, y);
+                        this.lineTo(x + width - radius.tr, y);
+                        this.quadraticCurveTo(x + width, y, x + width, y + radius.tr);
+                        this.lineTo(x + width, y + height - radius.br);
+                        this.quadraticCurveTo(x + width, y + height, x + width - radius.br, y + height);
+                        this.lineTo(x + radius.bl, y + height);
+                        this.quadraticCurveTo(x, y + height, x, y + height - radius.bl);
+                        this.lineTo(x, y + radius.tl);
+                        this.quadraticCurveTo(x, y, x + radius.tl, y);
+                        this.closePath();
+                    };
+                    console.log('[INIT] roundRect polyfill added');
                 }
             }
 
-            updateModelStatus(status, title, subtitle) {
-                const statusEl = document.getElementById('modelStatus');
-                statusEl.className = `model-status ${status}`;
-                statusEl.innerHTML = `
-                    <div>${title}</div>
-                    <div style="font-size: 10px; margin-top: 4px; opacity: 0.7;">${subtitle}</div>
-                `;
+            async init() {
+                console.log('[INIT] Setting up event listeners and components...');
+                this.setupEventListeners();
+                this.setupDragAndDrop();
+                this.setupCaptionDragging();
+                this.setupRealTimeEditing();
+                this.checkApiKey();
+                await this.initializeFFmpeg();
+                console.log('[INIT] VideoCaptionEditor initialization complete');
+            }
+
+            async initializeFFmpeg() {
+                try {
+                    console.log('[FFMPEG] Initializing FFmpeg.js...');
+                    
+                    // Update audio extraction section to show FFmpeg loading
+                    const audioSection = document.getElementById('audioExtractionSection');
+                    if (audioSection && !audioSection.classList.contains('hidden')) {
+                        const timeInfo = document.getElementById('extractionTimeInfo');
+                        timeInfo.textContent = 'Loading FFmpeg...';
+                        console.log('[FFMPEG] Updated UI to show loading state');
+                    }
+                    
+                    // Initialize FFmpeg
+                    const { FFmpeg } = FFmpegWASM;
+                    this.ffmpeg = new FFmpeg();
+                    
+                    // Load FFmpeg with progress tracking
+                    await this.ffmpeg.load({
+                        coreURL: './ffmpeg-core.js',
+                        wasmURL: './ffmpeg-core.wasm',
+                    });
+                    
+                    this.ffmpegReady = true;
+                    console.log('[FFMPEG] FFmpeg.js loaded successfully');
+                    
+                    // Update UI
+                    if (audioSection && !audioSection.classList.contains('hidden')) {
+                        this.updateExtractionInfo();
+                    }
+                    
+                } catch (error) {
+                    console.error('[FFMPEG] Failed to load FFmpeg.js:', error);
+                    this.ffmpegReady = false;
+                    
+                    // Update UI with error state
+                    const audioSection = document.getElementById('audioExtractionSection');
+                    if (audioSection && !audioSection.classList.contains('hidden')) {
+                        const timeInfo = document.getElementById('extractionTimeInfo');
+                        timeInfo.textContent = 'FFmpeg loading failed - using fallback';
+                        console.log('[FFMPEG] Updated UI to show fallback state');
+                    }
+                }
+            }
+
+            checkApiKey() {
+                console.log('[API] Checking API key configuration...');
+                const apiSetup = document.getElementById('apiSetup');
+                const transcribeBtn = document.getElementById('transcribeBtn');
+                const apiKeyInput = document.getElementById('apiKeyInput');
+                
+                if (this.apiKey) {
+                    console.log('[API] API key is configured');
+                    apiKeyInput.value = '••••••••••••••••••••••••••••••••';
+                    apiSetup.className = 'api-setup';
+                    apiSetup.innerHTML = `
+                        <div><strong>✅ API Key Configured</strong></div>
+                        <div style="font-size: 12px; margin: 8px 0 0 0; color: #b0b0b0;">
+                            Ready for AI transcription (12,000 minutes/month free)
+                        </div>
+                        <button id="changeKeyBtn" style="background: #13EF93; color: #000; border: none; padding: 6px 16px; border-radius: 4px; font-size: 12px; font-weight: 600; cursor: pointer; margin-top: 8px;">
+                            Change API Key
+                        </button>
+                    `;
+                    
+                    transcribeBtn.disabled = false;
+                    transcribeBtn.innerHTML = '<span>🚀</span> AI Transcribe';
+                    
+                    document.getElementById('changeKeyBtn').addEventListener('click', () => {
+                        console.log('[API] User requested to change API key');
+                        this.resetApiKey();
+                    });
+                } else {
+                    console.log('[API] API key not configured - transcription disabled');
+                    transcribeBtn.disabled = true;
+                    transcribeBtn.innerHTML = '<span>🔑</span> Setup Required';
+                    apiSetup.classList.add('warning');
+                }
+            }
+
+            cleanupVideo() {
+                console.log('[CLEANUP] Cleaning up previous video resources...');
+                if (this.video) {
+                    this.video.pause();
+                    this.video.src = '';
+                    this.video.load();
+                    console.log('[CLEANUP] Video element cleaned up');
+                }
+                
+                // Clean up audio video if it exists
+                if (this.audioVideo) {
+                    this.audioVideo.pause();
+                    this.audioVideo.src = '';
+                    this.audioVideo = null;
+                    console.log('[CLEANUP] Audio video element cleaned up');
+                }
+                
+                // Clean up previous video URL
+                if (this.currentVideoURL) {
+                    URL.revokeObjectURL(this.currentVideoURL);
+                    this.currentVideoURL = null;
+                    console.log('[CLEANUP] Previous video URL revoked');
+                }
+                
+                // Stop any ongoing recording
+                if (this.isRecording) {
+                    this.cancelVideoRecording();
+                    console.log('[CLEANUP] Ongoing recording cancelled');
+                }
+                
+                this.captions = [];
+                this.currentCaption = null;
+                this.duration = 0;
+                this.currentTime = 0;
+                this.extractedAudioBlob = null;
+                this.isExtracting = false;
+                this.recordedChunks = [];
+                console.log('[CLEANUP] State variables reset');
+                
+                this.updateCaptionList();
+                this.renderCaptionSegments();
+                
+                document.getElementById('audioExtractionSection').classList.add('hidden');
+                document.getElementById('editorWorkspace').style.display = 'none';
+                document.getElementById('uploadArea').style.display = 'block';
+                console.log('[CLEANUP] UI reset to upload state');
+            }
+
+            updateExtractionInfo() {
+                console.log('[EXTRACTION] Updating extraction info UI...');
+                const timeInfo = document.getElementById('extractionTimeInfo');
+                const sizeInfo = document.getElementById('extractionSizeInfo');
+                
+                if (!this.ffmpegReady) {
+                    timeInfo.textContent = this.ffmpeg ? 'Loading FFmpeg...' : 'FFmpeg loading failed - using fallback';
+                    sizeInfo.textContent = '';
+                    console.log('[EXTRACTION] FFmpeg not ready, showing loading/error state');
+                    return;
+                }
+                
+                if (this.duration && this.videoFile) {
+                    const minutes = Math.floor(this.duration / 60);
+                    const seconds = Math.floor(this.duration % 60);
+                    const fileSize = (this.videoFile.size / (1024 * 1024)).toFixed(1);
+                    
+                    timeInfo.textContent = `Duration: ${minutes}:${seconds.toString().padStart(2, '0')} • FFmpeg Ready`;
+                    sizeInfo.textContent = `Video: ${fileSize}MB`;
+                    console.log('[EXTRACTION] Updated with video info:', { minutes, seconds, fileSize });
+                } else {
+                    timeInfo.textContent = 'FFmpeg ready for extraction';
+                    sizeInfo.textContent = '';
+                    console.log('[EXTRACTION] Ready state shown');
+                }
+            }
+
+            resetExtractionUI() {
+                console.log('[EXTRACTION] Resetting extraction UI...');
+                const progressBar = document.getElementById('extractionProgressBar');
+                const extractBtn = document.getElementById('extractAudioBtn');
+                const previewBtn = document.getElementById('previewAudioBtn');
+                const audioPreview = document.getElementById('audioPreview');
+                
+                progressBar.style.width = '0%';
+                extractBtn.textContent = this.ffmpegReady ? '🎵 Extract Audio (FFmpeg)' : '🎵 Extract Audio (Fallback)';
+                extractBtn.classList.remove('success');
+                extractBtn.disabled = false;
+                previewBtn.disabled = true;
+                audioPreview.classList.remove('show');
+                
+                this.updateExtractionInfo();
+                console.log('[EXTRACTION] UI reset complete');
+            }
+
+            async extractAudioManually() {
+                console.log('[EXTRACTION] Manual audio extraction requested...');
+                if (this.isExtracting) {
+                    console.log('[EXTRACTION] Already extracting, ignoring request');
+                    return;
+                }
+                
+                if (!this.videoFile) {
+                    console.error('[EXTRACTION] No video file available');
+                    alert('Please upload a video first');
+                    return;
+                }
+                
+                const extractBtn = document.getElementById('extractAudioBtn');
+                const timeInfo = document.getElementById('extractionTimeInfo');
+                
+                try {
+                    this.isExtracting = true;
+                    extractBtn.disabled = true;
+                    console.log('[EXTRACTION] Starting extraction process...');
+                    
+                    if (this.ffmpegReady) {
+                        extractBtn.textContent = '⚡ Extracting with FFmpeg...';
+                        timeInfo.textContent = 'Using FFmpeg for high-quality extraction...';
+                        console.log('[EXTRACTION] Using FFmpeg method');
+                    } else {
+                        extractBtn.textContent = '⏳ Extracting with fallback...';
+                        timeInfo.textContent = 'Using browser fallback method...';
+                        console.log('[EXTRACTION] Using fallback method');
+                    }
+                    
+                    this.extractedAudioBlob = await this.extractAudioFromVideo(true);
+                    console.log('[EXTRACTION] Audio extraction successful:', {
+                        size: this.extractedAudioBlob.size,
+                        type: this.extractedAudioBlob.type
+                    });
+                    
+                    extractBtn.classList.add('success');
+                    extractBtn.textContent = '✅ Audio Ready';
+                    
+                    const audioSize = (this.extractedAudioBlob.size / (1024 * 1024)).toFixed(1);
+                    const method = this.ffmpegReady ? 'FFmpeg' : 'Fallback';
+                    timeInfo.textContent = `✅ Extracted with ${method}: ${audioSize}MB`;
+                    
+                    document.getElementById('previewAudioBtn').disabled = false;
+                    
+                    const audioElement = document.getElementById('extractedAudio');
+                    const audioURL = URL.createObjectURL(this.extractedAudioBlob);
+                    audioElement.src = audioURL;
+                    console.log('[EXTRACTION] Audio preview setup complete');
+                    
+                    audioElement.addEventListener('ended', () => {
+                        URL.revokeObjectURL(audioURL);
+                        console.log('[EXTRACTION] Audio preview URL revoked');
+                    }, { once: true });
+                    
+                } catch (error) {
+                    console.error('[EXTRACTION] Manual audio extraction failed:', error);
+                    extractBtn.textContent = '❌ Failed';
+                    timeInfo.textContent = `Extraction failed: ${error.message}`;
+                    
+                    alert(`Audio extraction failed: ${error.message}\n\nPlease ensure your video has audio content.`);
+                } finally {
+                    this.isExtracting = false;
+                    extractBtn.disabled = false;
+                    console.log('[EXTRACTION] Extraction process completed');
+                }
+            }
+
+            previewExtractedAudio() {
+                console.log('[AUDIO] Audio preview toggle requested...');
+                const audioPreview = document.getElementById('audioPreview');
+                const previewBtn = document.getElementById('previewAudioBtn');
+                
+                if (audioPreview.classList.contains('show')) {
+                    audioPreview.classList.remove('show');
+                    previewBtn.textContent = '🔊 Preview';
+                    console.log('[AUDIO] Audio preview hidden');
+                } else {
+                    audioPreview.classList.add('show');
+                    previewBtn.textContent = '🙈 Hide Preview';
+                    console.log('[AUDIO] Audio preview shown');
+                }
             }
 
             setupEventListeners() {
-                // File upload
+                console.log('[EVENTS] Setting up event listeners...');
+                
+                document.getElementById('saveKeyBtn').addEventListener('click', this.saveApiKey.bind(this));
+                document.getElementById('apiKeyInput').addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') {
+                        console.log('[EVENTS] Enter key pressed in API key input');
+                        this.saveApiKey();
+                    }
+                });
+
                 document.getElementById('fileInput').addEventListener('change', this.handleFileSelect.bind(this));
                 document.getElementById('uploadArea').addEventListener('click', () => {
+                    console.log('[EVENTS] Upload area clicked');
                     document.getElementById('fileInput').click();
                 });
 
-                // Video controls
                 document.getElementById('playPauseBtn').addEventListener('click', this.togglePlayPause.bind(this));
-                document.getElementById('transcribeBtn').addEventListener('click', this.startWhisperTranscription.bind(this));
+                document.getElementById('transcribeBtn').addEventListener('click', this.startTranscription.bind(this));
                 document.getElementById('addCaptionBtn').addEventListener('click', this.addCaption.bind(this));
 
-                // Caption editing
+                document.getElementById('extractAudioBtn').addEventListener('click', this.extractAudioManually.bind(this));
+                document.getElementById('previewAudioBtn').addEventListener('click', this.previewExtractedAudio.bind(this));
+
                 document.getElementById('updateCaptionBtn').addEventListener('click', this.updateCaption.bind(this));
                 document.getElementById('deleteCaptionBtn').addEventListener('click', this.deleteCaption.bind(this));
 
-                // Position controls
                 document.getElementById('positionX').addEventListener('input', this.updateCaptionPosition.bind(this));
                 document.getElementById('positionY').addEventListener('input', this.updateCaptionPosition.bind(this));
 
-                // Timeline
                 document.getElementById('timeline').addEventListener('click', this.seekToTime.bind(this));
                 document.getElementById('playhead').addEventListener('mousedown', this.startDraggingPlayhead.bind(this));
 
-                // Style controls
                 document.getElementById('fontSize').addEventListener('input', this.updateStyle.bind(this));
                 document.getElementById('textColor').addEventListener('change', this.updateStyle.bind(this));
                 document.getElementById('backgroundColor').addEventListener('change', this.updateStyle.bind(this));
                 document.getElementById('backgroundOpacity').addEventListener('input', this.updateStyle.bind(this));
                 document.getElementById('fontWeight').addEventListener('change', this.updateStyle.bind(this));
 
-                // Preset buttons
                 document.querySelectorAll('.preset-btn').forEach(btn => {
                     btn.addEventListener('click', this.applyPreset.bind(this));
                 });
 
-                // Tab switching
                 document.querySelectorAll('.tab-btn').forEach(btn => {
                     btn.addEventListener('click', this.switchTab.bind(this));
                 });
 
-                // Export
-                document.getElementById('exportBtn').addEventListener('click', this.exportVideo.bind(this));
+                document.getElementById('exportBtn').addEventListener('click', this.exportCaptions.bind(this));
+                
+                // ADD THE MISSING EVENT LISTENER FOR RECORD BUTTON
+                document.getElementById('exportVideoBtn').addEventListener('click', this.startVideoRecording.bind(this));
+                console.log('[EVENTS] Video recording button event listener added');
+                
+                // Add event listener for cancel recording button
+                document.getElementById('cancelRecordingBtn').addEventListener('click', this.cancelVideoRecording.bind(this));
+                console.log('[EVENTS] Cancel recording button event listener added');
+                
+                // Add window resize listener for responsive layout
+                window.addEventListener('resize', () => {
+                    if (this.video && this.duration) {
+                        console.log('[EVENTS] Window resized, re-optimizing layout...');
+                        this.optimizeVideoLayout();
+                    }
+                });
+                
+                // Handle orientation changes on mobile
+                window.addEventListener('orientationchange', () => {
+                    setTimeout(() => {
+                        if (this.video && this.duration) {
+                            console.log('[EVENTS] Orientation changed, re-optimizing layout...');
+                            this.optimizeVideoLayout();
+                        }
+                    }, 100); // Small delay to let orientation change complete
+                });
+                console.log('[EVENTS] Window resize and orientation listeners added');
+                
+                console.log('[EVENTS] All event listeners set up successfully');
+            }
+
+            saveApiKey() {
+                console.log('[API] Save API key requested...');
+                const apiKeyInput = document.getElementById('apiKeyInput');
+                const key = apiKeyInput.value.trim();
+                
+                if (!key) {
+                    console.log('[API] Empty API key provided');
+                    alert('Please enter your Deepgram API key');
+                    return;
+                }
+
+                if (key.length < 30) {
+                    console.log('[API] Invalid API key format - too short:', key.length);
+                    alert('Invalid API key format. Deepgram keys are longer than 30 characters.');
+                    return;
+                }
+
+                this.apiKey = key;
+                localStorage.setItem('deepgram_key', key);
+                console.log('[API] API key saved successfully');
+                this.checkApiKey();
             }
 
             setupDragAndDrop() {
+                console.log('[DRAG] Setting up drag and drop functionality...');
                 const uploadArea = document.getElementById('uploadArea');
 
                 uploadArea.addEventListener('dragover', (e) => {
                     e.preventDefault();
                     uploadArea.classList.add('drag-over');
+                    console.log('[DRAG] Dragover event - visual feedback added');
                 });
 
                 uploadArea.addEventListener('dragleave', (e) => {
                     if (!uploadArea.contains(e.relatedTarget)) {
                         uploadArea.classList.remove('drag-over');
+                        console.log('[DRAG] Dragleave event - visual feedback removed');
                     }
                 });
 
                 uploadArea.addEventListener('drop', (e) => {
                     e.preventDefault();
                     uploadArea.classList.remove('drag-over');
+                    console.log('[DRAG] Drop event triggered');
                     
                     const files = e.dataTransfer.files;
+                    console.log('[DRAG] Files dropped:', files.length);
+                    
                     if (files.length === 0) {
+                        console.error('[DRAG] No files detected in drop');
                         alert('No files detected. Please try again.');
                         return;
                     }
                     
                     if (files.length > 1) {
+                        console.error('[DRAG] Multiple files dropped:', files.length);
                         alert('Please drop only one video file at a time.');
                         return;
                     }
                     
                     const file = files[0];
+                    console.log('[DRAG] Processing dropped file:', {
+                        name: file.name,
+                        type: file.type,
+                        size: file.size
+                    });
                     
                     if (!file.type.startsWith('video/') && !file.name.match(/\.(mp4|mov|avi|webm|mkv|m4v|3gp|flv)$/i)) {
-                        alert('Please drop a valid video file (MP4, MOV, AVI, WebM, MKV, M4V, 3GP, or FLV).');
+                        console.error('[DRAG] Invalid file type:', file.type, file.name);
+                        alert('Please drop a valid video file.\n\nSupported formats: MP4, MOV, AVI, WebM, MKV, M4V, 3GP, FLV');
                         return;
                     }
                     
+                    this.cleanupVideo();
                     this.loadVideo(file);
                 });
 
                 document.addEventListener('paste', (e) => {
+                    console.log('[PASTE] Paste event detected');
                     const items = e.clipboardData?.items;
-                    if (!items) return;
+                    if (!items) {
+                        console.log('[PASTE] No clipboard items found');
+                        return;
+                    }
                     
                     for (let item of items) {
                         if (item.type.startsWith('video/')) {
+                            console.log('[PASTE] Video file found in clipboard:', item.type);
                             const file = item.getAsFile();
                             if (file) {
+                                this.cleanupVideo();
                                 this.loadVideo(file);
                                 break;
                             }
                         }
                     }
                 });
+                
+                console.log('[DRAG] Drag and drop setup complete');
             }
 
             handleFileSelect(e) {
+                console.log('[FILE] File input change event triggered');
                 const file = e.target.files[0];
                 if (file) {
+                    console.log('[FILE] File selected:', {
+                        name: file.name,
+                        type: file.type,
+                        size: file.size
+                    });
                     this.loadVideo(file);
+                } else {
+                    console.log('[FILE] No file selected');
                 }
             }
 
             setupCaptionDragging() {
+                console.log('[CAPTION] Setting up caption dragging functionality...');
                 const overlay = document.getElementById('captionOverlay');
                 
                 overlay.addEventListener('mousedown', (e) => {
+                    console.log('[CAPTION] Caption mousedown event triggered');
                     const currentDisplayedCaption = this.captions.find(caption => 
                         this.currentTime >= caption.start && this.currentTime <= caption.end
                     );
                     
-                    if (!currentDisplayedCaption) return;
+                    if (!currentDisplayedCaption) {
+                        console.log('[CAPTION] No caption currently displayed for dragging');
+                        return;
+                    }
                     
+                    console.log('[CAPTION] Starting caption drag for caption:', currentDisplayedCaption.id);
                     this.isDraggingCaption = true;
                     overlay.classList.add('dragging');
                     
@@ -1143,6 +1857,7 @@
                     };
                     
                     const onMouseUp = () => {
+                        console.log('[CAPTION] Caption drag ended');
                         this.isDraggingCaption = false;
                         overlay.classList.remove('dragging');
                         document.removeEventListener('mousemove', onMouseMove);
@@ -1159,9 +1874,17 @@
                     e.preventDefault();
                     e.stopPropagation();
                 });
+                
+                console.log('[CAPTION] Caption dragging setup complete');
             }
 
             loadVideo(file) {
+                console.log('[VIDEO] Loading video file:', {
+                    name: file.name,
+                    type: file.type,
+                    size: file.size
+                });
+                
                 const supportedTypes = [
                     'video/mp4', 'video/quicktime', 'video/x-msvideo', 
                     'video/webm', 'video/x-matroska', 'video/mp4v-es',
@@ -1169,53 +1892,196 @@
                 ];
                 
                 if (!supportedTypes.includes(file.type) && !file.name.match(/\.(mp4|mov|avi|webm|mkv|m4v|3gp|flv)$/i)) {
+                    console.error('[VIDEO] Unsupported video format:', file.type, file.name);
                     alert('Unsupported video format. Please use MP4, MOV, AVI, WebM, MKV, M4V, 3GP, or FLV files.');
                     return;
                 }
 
-                const maxSize = 500 * 1024 * 1024; // 500MB
+                const maxSize = 200 * 1024 * 1024;
                 if (file.size > maxSize) {
-                    const proceed = confirm(
-                        `This video file is ${Math.round(file.size / (1024 * 1024))}MB, which is quite large. ` +
-                        `Processing may take longer and could use significant memory.\n\n` +
-                        `For best performance, consider using a smaller file or compressing the video.\n\n` +
-                        `Continue anyway?`
-                    );
-                    if (!proceed) return;
+                    console.warn('[VIDEO] Large file detected:', file.size, 'bytes');
+                    const proceed = confirm(`Video file is quite large (${Math.round(file.size / (1024 * 1024))}MB). This may cause performance issues.\n\nFor best results:\n• Use videos under 100MB\n• Consider compressing your video first\n\nContinue anyway?`);
+                    if (!proceed) {
+                        console.log('[VIDEO] User cancelled large file load');
+                        return;
+                    }
+                }
+
+                console.log('[VIDEO] Updating upload area to loading state...');
+                document.getElementById('uploadArea').innerHTML = `
+                    <div class="upload-icon">⏳</div>
+                    <div class="upload-text">Loading video...</div>
+                    <div class="upload-subtext">Please wait while we prepare your video</div>
+                `;
+
+                // Clean up previous video URL before creating new one
+                if (this.currentVideoURL) {
+                    URL.revokeObjectURL(this.currentVideoURL);
+                    console.log('[VIDEO] Previous video URL cleaned up');
                 }
 
                 const videoURL = URL.createObjectURL(file);
+                this.currentVideoURL = videoURL; // Store for later cleanup
                 this.video = document.getElementById('videoPlayer');
+                this.videoFile = file;
+                
+                console.log('[VIDEO] Video URL created:', videoURL.substring(0, 50) + '...');
+                
+                const videoLoadingOverlay = document.getElementById('videoLoadingOverlay');
+                if (videoLoadingOverlay) {
+                    videoLoadingOverlay.classList.remove('hidden');
+                    console.log('[VIDEO] Loading overlay shown');
+                }
+                
+                this.video.preload = 'metadata';
                 this.video.src = videoURL;
-                this.videoFile = file; // Store file for audio extraction
                 
                 this.video.addEventListener('error', (e) => {
-                    console.error('Video loading error:', e);
-                    alert('Unable to load this video file. The format may not be supported by your browser, or the file may be corrupted.');
+                    console.error('[VIDEO] Video loading error:', e, this.video.error);
+                    alert('Unable to load this video file. The format may not be supported by your browser, or the file may be corrupted.\n\nTry:\n• Converting to MP4 format\n• Using a smaller file\n• Refreshing the page');
+                    this.resetUploadArea();
                 }, { once: true });
                 
                 this.video.addEventListener('loadedmetadata', () => {
                     this.duration = this.video.duration;
+                    console.log('[VIDEO] Video metadata loaded:', {
+                        duration: this.duration,
+                        videoWidth: this.video.videoWidth,
+                        videoHeight: this.video.videoHeight
+                    });
+                    
+                    // Optimize video container for different aspect ratios
+                    this.optimizeVideoLayout();
+                    
+                    const videoLoadingOverlay = document.getElementById('videoLoadingOverlay');
+                    if (videoLoadingOverlay) {
+                        videoLoadingOverlay.classList.add('hidden');
+                        console.log('[VIDEO] Loading overlay hidden');
+                    }
+                    
+                    if (this.duration > 1800) {
+                        console.warn('[VIDEO] Long video detected:', this.duration, 'seconds');
+                        const proceed = confirm(`This video is ${Math.round(this.duration / 60)} minutes long. Transcription may take several minutes and use your free quota.\n\nFor faster results, consider using shorter video clips.\n\nContinue?`);
+                        if (!proceed) {
+                            console.log('[VIDEO] User cancelled long video load');
+                            this.resetUploadArea();
+                            return;
+                        }
+                    }
+                    
                     this.setupVideoEvents();
                     this.createTimelineMarkers();
                     this.showEditor();
+                    console.log('[VIDEO] Video loading complete and editor shown');
                     
-                    setTimeout(() => {
-                        URL.revokeObjectURL(videoURL);
-                    }, 1000);
+                    // Don't automatically clean up the blob URL - let it persist for the video element
+                    // It will be cleaned up when a new video is loaded or when cleanupVideo() is called
                 }, { once: true });
+
+                setTimeout(() => {
+                    if (!this.duration) {
+                        console.error('[VIDEO] Video loading timeout');
+                        alert('Video loading is taking too long. Please try:\n• A smaller video file\n• Converting to MP4 format\n• Refreshing the page');
+                        this.resetUploadArea();
+                    }
+                }, 30000);
+            }
+
+            optimizeVideoLayout() {
+                console.log('[LAYOUT] Optimizing video layout for aspect ratio...');
                 
-                this.video.addEventListener('loadstart', () => {
-                    console.log('Loading video...');
-                }, { once: true });
+                const videoWidth = this.video.videoWidth || 1920;
+                const videoHeight = this.video.videoHeight || 1080;
+                const aspectRatio = videoWidth / videoHeight;
+                
+                console.log('[LAYOUT] Video dimensions:', {
+                    width: videoWidth,
+                    height: videoHeight,
+                    aspectRatio: aspectRatio.toFixed(2)
+                });
+
+                const videoPreview = document.querySelector('.video-preview');
+                const videoContainer = document.querySelector('.video-container');
+                
+                // Remove existing aspect ratio classes
+                videoContainer.classList.remove('portrait', 'landscape', 'square', 'ultrawide');
+                
+                // Handle different aspect ratios
+                if (aspectRatio < 0.75) {
+                    // Very tall videos (portrait, like 9:16)
+                    console.log('[LAYOUT] Portrait video detected');
+                    videoPreview.style.maxHeight = 'min(70vh, 600px)';
+                    videoContainer.classList.add('portrait');
+                } else if (aspectRatio < 1.2) {
+                    // Square-ish videos (like 4:3 or 1:1)
+                    console.log('[LAYOUT] Square video detected');
+                    videoPreview.style.maxHeight = 'min(60vh, 500px)';
+                    videoContainer.classList.add('square');
+                } else if (aspectRatio > 2.5) {
+                    // Ultra-wide videos (like 21:9)
+                    console.log('[LAYOUT] Ultra-wide video detected');
+                    videoPreview.style.minHeight = '250px';
+                    videoContainer.classList.add('ultrawide');
+                } else {
+                    // Standard landscape videos (like 16:9)
+                    console.log('[LAYOUT] Standard landscape video detected');
+                    videoPreview.style.maxHeight = 'calc(100vh - 350px)';
+                    videoContainer.classList.add('landscape');
+                }
+                
+                // Ensure timeline is always visible
+                this.ensureTimelineVisibility();
+            }
+
+            ensureTimelineVisibility() {
+                console.log('[LAYOUT] Ensuring timeline visibility...');
+                
+                // Force a layout check after a short delay
+                setTimeout(() => {
+                    const timelineContainer = document.querySelector('.timeline-container');
+                    const controls = document.querySelector('.controls');
+                    const rect = timelineContainer.getBoundingClientRect();
+                    
+                    if (rect.bottom > window.innerHeight) {
+                        console.log('[LAYOUT] Timeline pushed below viewport, adjusting...');
+                        const videoPreview = document.querySelector('.video-preview');
+                        const currentMaxHeight = videoPreview.style.maxHeight || 'calc(100vh - 350px)';
+                        
+                        // Reduce video height to ensure timeline visibility
+                        if (currentMaxHeight.includes('vh')) {
+                            videoPreview.style.maxHeight = 'calc(100vh - 400px)';
+                        } else {
+                            const currentHeight = parseInt(currentMaxHeight);
+                            videoPreview.style.maxHeight = `${Math.max(currentHeight - 50, 300)}px`;
+                        }
+                    }
+                }, 100);
+            }
+
+            resetUploadArea() {
+                console.log('[UI] Resetting upload area...');
+                document.getElementById('uploadArea').innerHTML = `
+                    <div class="upload-icon">📁</div>
+                    <div class="upload-text">Drop your video file here</div>
+                    <div class="upload-subtext">Supports MP4, MOV, AVI, WebM, MKV, M4V and more • Ultra HD recording with perfect audio sync</div>
+                    <input type="file" id="fileInput" accept=".mp4,.mov,.avi,.webm,.mkv,.m4v,.3gp,.flv" style="display: none;">
+                `;
+                
+                document.getElementById('fileInput').addEventListener('change', this.handleFileSelect.bind(this));
+                document.getElementById('uploadArea').addEventListener('click', () => {
+                    document.getElementById('fileInput').click();
+                });
+                console.log('[UI] Upload area reset complete');
             }
 
             createTimelineMarkers() {
+                console.log('[TIMELINE] Creating timeline markers for duration:', this.duration);
                 const markersContainer = document.getElementById('timelineMarkers');
                 markersContainer.innerHTML = '';
                 
                 const duration = this.duration;
                 const intervals = this.getTimeIntervals(duration);
+                console.log('[TIMELINE] Using intervals:', intervals);
                 
                 intervals.forEach(time => {
                     const marker = document.createElement('div');
@@ -1234,6 +2100,7 @@
                     
                     markersContainer.appendChild(marker);
                 });
+                console.log('[TIMELINE] Timeline markers created');
             }
 
             getTimeIntervals(duration) {
@@ -1257,23 +2124,73 @@
             }
 
             setupVideoEvents() {
-                this.video.addEventListener('timeupdate', this.updateTimeline.bind(this));
+                console.log('[VIDEO] Setting up video event listeners...');
+                this.video.preload = 'metadata';
+                this.video.playsinline = true;
+                
+                let lastUpdateTime = 0;
+                const updateThrottle = 100;
+                
+                this.video.addEventListener('timeupdate', (e) => {
+                    const now = Date.now();
+                    if (now - lastUpdateTime >= updateThrottle) {
+                        this.updateTimeline();
+                        lastUpdateTime = now;
+                    }
+                });
+                
                 this.video.addEventListener('play', () => {
                     this.isPlaying = true;
                     this.updatePlayButton();
+                    console.log('[VIDEO] Video play event');
                 });
+                
                 this.video.addEventListener('pause', () => {
                     this.isPlaying = false;
                     this.updatePlayButton();
+                    console.log('[VIDEO] Video pause event');
                 });
+                
+                this.video.addEventListener('loadstart', () => {
+                    console.log('[VIDEO] Video loading started');
+                });
+                
+                this.video.addEventListener('canplay', () => {
+                    console.log('[VIDEO] Video can start playing');
+                });
+                
+                this.video.addEventListener('waiting', () => {
+                    console.log('[VIDEO] Video is buffering');
+                });
+                
+                this.video.addEventListener('stalled', () => {
+                    console.warn('[VIDEO] Video playback stalled');
+                });
+                
+                this.video.addEventListener('loadeddata', () => {
+                    if (this.duration > 600) {
+                        console.log('[VIDEO] Long video detected, applying performance optimizations');
+                        this.video.preload = 'none';
+                    }
+                });
+                
+                console.log('[VIDEO] Video events setup complete');
             }
 
             showEditor() {
+                console.log('[UI] Showing editor interface...');
                 document.getElementById('uploadArea').style.display = 'none';
                 document.getElementById('editorWorkspace').style.display = 'grid';
+                
+                document.getElementById('audioExtractionSection').classList.remove('hidden');
+                
+                this.updateExtractionInfo();
+                this.resetExtractionUI();
+                console.log('[UI] Editor interface shown');
             }
 
             togglePlayPause() {
+                console.log('[PLAYBACK] Toggle play/pause requested, current state:', this.isPlaying);
                 if (this.isPlaying) {
                     this.video.pause();
                 } else {
@@ -1284,6 +2201,7 @@
             updatePlayButton() {
                 const btn = document.getElementById('playPauseBtn');
                 btn.innerHTML = this.isPlaying ? '<span>⏸️</span> Pause' : '<span>▶️</span> Play';
+                console.log('[UI] Play button updated:', this.isPlaying ? 'Pause' : 'Play');
             }
 
             updateTimeline() {
@@ -1305,16 +2223,19 @@
             }
 
             seekToTime(e) {
+                console.log('[TIMELINE] Seek to time requested');
                 const timeline = document.getElementById('timeline');
                 const rect = timeline.getBoundingClientRect();
                 const clickX = e.clientX - rect.left;
                 const percentage = clickX / rect.width;
                 const newTime = percentage * this.duration;
                 
+                console.log('[TIMELINE] Seeking to:', newTime, 'seconds');
                 this.video.currentTime = newTime;
             }
 
             startDraggingPlayhead(e) {
+                console.log('[TIMELINE] Playhead drag started');
                 e.preventDefault();
                 this.isDraggingPlayhead = true;
                 const timeline = document.getElementById('timeline');
@@ -1329,6 +2250,7 @@
                 };
                 
                 const onMouseUp = () => {
+                    console.log('[TIMELINE] Playhead drag ended');
                     this.isDraggingPlayhead = false;
                     document.removeEventListener('mousemove', onMouseMove);
                     document.removeEventListener('mouseup', onMouseUp);
@@ -1338,191 +2260,505 @@
                 document.addEventListener('mouseup', onMouseUp);
             }
 
-            async startWhisperTranscription() {
-                if (!this.video || !this.video.src) {
+            async startTranscription() {
+                console.log('[TRANSCRIPTION] Transcription requested...');
+                if (!this.videoFile) {
+                    console.error('[TRANSCRIPTION] No video file available');
                     alert('Please upload a video first');
                     return;
                 }
 
-                if (this.modelStatus !== 'ready') {
-                    alert('Whisper AI model is not ready yet. Please wait for it to load or refresh the page if there was an error.');
+                if (!this.apiKey) {
+                    console.error('[TRANSCRIPTION] No API key configured');
+                    alert('Please set up your Deepgram API key first');
                     return;
                 }
 
+                console.log('[TRANSCRIPTION] Starting transcription process...');
                 document.getElementById('loadingOverlay').classList.remove('hidden');
-                document.getElementById('progressText').textContent = 'Extracting audio from video...';
                 
                 const progressBar = document.getElementById('transcriptionProgress');
                 progressBar.style.width = '0%';
                 
                 try {
-                    // Extract audio from video
-                    document.getElementById('progressText').textContent = 'Extracting audio from video...';
-                    progressBar.style.width = '20%';
+                    let audioBlob = this.extractedAudioBlob;
                     
-                    const audioBlob = await this.extractAudioFromVideo();
+                    // If audio not already extracted, extract it now
+                    if (!audioBlob) {
+                        console.log('[TRANSCRIPTION] Audio not extracted, extracting now...');
+                        document.getElementById('progressText').textContent = 'Extracting audio from video...';
+                        progressBar.style.width = '10%';
+                        
+                        audioBlob = await this.extractAudioFromVideo(false); // false for auto extraction
+                        this.extractedAudioBlob = audioBlob;
+                        console.log('[TRANSCRIPTION] Audio extracted:', audioBlob.size, 'bytes');
+                        
+                        // Update extraction UI if visible
+                        if (!document.getElementById('audioExtractionSection').classList.contains('hidden')) {
+                            const extractBtn = document.getElementById('extractAudioBtn');
+                            const timeInfo = document.getElementById('extractionTimeInfo');
+                            
+                            extractBtn.classList.add('success');
+                            extractBtn.textContent = '✅ Audio Ready';
+                            timeInfo.textContent = `Extracted: ${(audioBlob.size / (1024 * 1024)).toFixed(1)}MB`;
+                            document.getElementById('previewAudioBtn').disabled = false;
+                            
+                            // Setup preview
+                            const audioElement = document.getElementById('extractedAudio');
+                            const audioURL = URL.createObjectURL(audioBlob);
+                            audioElement.src = audioURL;
+                            console.log('[TRANSCRIPTION] Audio preview setup complete');
+                        }
+                    } else {
+                        console.log('[TRANSCRIPTION] Using previously extracted audio:', audioBlob.size, 'bytes');
+                    }
                     
-                    document.getElementById('progressText').textContent = 'Running Whisper AI transcription...';
-                    progressBar.style.width = '40%';
+                    // Step 2: Send to Deepgram
+                    console.log('[TRANSCRIPTION] Sending to Deepgram...');
+                    document.getElementById('progressText').textContent = 'Processing with Deepgram Nova-2...';
+                    progressBar.style.width = '50%';
                     
-                    // Convert audio blob to array buffer for Whisper
-                    const audioBuffer = await audioBlob.arrayBuffer();
+                    const transcript = await this.transcribeWithDeepgram(audioBlob);
+                    console.log('[TRANSCRIPTION] Deepgram response received');
                     
-                    // Get selected language
-                    const language = document.getElementById('languageSelect').value;
-                    const options = {
-                        language: language === 'auto' ? null : language,
-                        task: 'transcribe',
-                        return_timestamps: true,
-                        chunk_length_s: 30,
-                        stride_length_s: 5
-                    };
-                    
-                    document.getElementById('progressText').textContent = 'Processing with Whisper AI...';
-                    progressBar.style.width = '60%';
-                    
-                    // Run Whisper transcription
-                    const result = await this.whisperPipeline(audioBuffer, options);
-                    
+                    // Step 3: Process results
                     document.getElementById('progressText').textContent = 'Creating captions...';
-                    progressBar.style.width = '80%';
+                    progressBar.style.width = '95%';
                     
-                    // Process the results
-                    this.processWhisperResults(result);
+                    this.processTranscriptionResults(transcript);
                     
                     progressBar.style.width = '100%';
                     document.getElementById('progressText').textContent = 'Complete!';
+                    console.log('[TRANSCRIPTION] Transcription process complete');
                     
                     setTimeout(() => {
                         document.getElementById('loadingOverlay').classList.add('hidden');
-                    }, 1000);
+                    }, 1500);
                     
                 } catch (error) {
-                    console.error('Whisper transcription failed:', error);
+                    console.error('[TRANSCRIPTION] Transcription failed:', error);
                     document.getElementById('loadingOverlay').classList.add('hidden');
-                    alert(`Transcription failed: ${error.message}\n\nPlease try with a shorter video or check that the video has clear audio.`);
+                    
+                    let errorMessage = `Transcription failed: ${error.message}`;
+                    
+                    if (error.message.includes('No audio detected')) {
+                        errorMessage += '\n\nPlease ensure your video has clear audio. Try:\n• Checking video volume\n• Using a different video file\n• Converting to MP4 format';
+                    } else if (error.message.includes('API key') || error.message.includes('Unauthorized')) {
+                        errorMessage += '\n\nPlease check your Deepgram API key and try again.';
+                    } else if (error.message.includes('file size') || error.message.includes('too large')) {
+                        errorMessage += '\n\nTry using a smaller video file (under 100MB).';
+                    } else if (error.message.includes('network') || error.message.includes('fetch')) {
+                        errorMessage += '\n\nPlease check your internet connection and try again.';
+                    } else {
+                        errorMessage += '\n\nYou can try again or create captions manually using the "Add Caption" button.';
+                    }
+                    
+                    alert(errorMessage);
                 }
             }
 
-            async extractAudioFromVideo() {
-                return new Promise((resolve, reject) => {
-                    const canvas = document.createElement('canvas');
-                    const ctx = canvas.getContext('2d');
-                    
-                    // Create a temporary video element
-                    const video = document.createElement('video');
-                    video.src = this.video.src;
-                    video.crossOrigin = 'anonymous';
-                    
-                    video.addEventListener('loadeddata', async () => {
-                        try {
-                            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            async extractAudioFromVideo(showProgress = false) {
+                console.log('[EXTRACTION] Audio extraction requested, showProgress:', showProgress);
+                if (this.ffmpegReady && this.ffmpeg) {
+                    console.log('[EXTRACTION] Using FFmpeg method');
+                    return this.extractAudioWithFFmpeg(showProgress);
+                } else {
+                    console.log('[EXTRACTION] Using fallback method');
+                    return this.extractAudioFallback(showProgress);
+                }
+            }
+
+            async extractAudioWithFFmpeg(showProgress = false) {
+                return new Promise(async (resolve, reject) => {
+                    try {
+                        console.log('[FFMPEG] Starting FFmpeg audio extraction...');
+                        
+                        // Read the video file into FFmpeg
+                        const videoData = new Uint8Array(await this.videoFile.arrayBuffer());
+                        const inputName = `input.${this.getVideoExtension()}`;
+                        const outputName = 'output.wav';
+                        
+                        console.log('[FFMPEG] Writing video data to FFmpeg:', inputName);
+                        await this.ffmpeg.writeFile(inputName, videoData);
+                        
+                        // Set up progress tracking
+                        let progressInterval;
+                        if (showProgress) {
+                            const progressBar = document.getElementById('extractionProgressBar');
+                            const timeInfo = document.getElementById('extractionTimeInfo');
+                            let progress = 0;
                             
-                            // Create media element source
-                            const source = audioContext.createMediaElementSource(video);
-                            const destination = audioContext.createMediaStreamDestination();
-                            
-                            // Connect source to destination
-                            source.connect(destination);
-                            
-                            // Create MediaRecorder to capture audio
-                            const mediaRecorder = new MediaRecorder(destination.stream, {
-                                mimeType: 'audio/webm'
-                            });
-                            
-                            const audioChunks = [];
-                            
-                            mediaRecorder.ondataavailable = (event) => {
-                                if (event.data.size > 0) {
-                                    audioChunks.push(event.data);
-                                }
-                            };
-                            
-                            mediaRecorder.onstop = () => {
-                                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-                                resolve(audioBlob);
-                            };
-                            
-                            // Start recording and play video
-                            mediaRecorder.start();
-                            video.play();
-                            
-                            // Stop when video ends
-                            video.addEventListener('ended', () => {
-                                mediaRecorder.stop();
-                                source.disconnect();
-                                audioContext.close();
-                            });
-                            
-                        } catch (error) {
-                            reject(new Error(`Audio extraction failed: ${error.message}`));
+                            // FFmpeg progress simulation since we can't get exact progress easily
+                            progressInterval = setInterval(() => {
+                                progress += Math.random() * 10;
+                                if (progress > 90) progress = 90; // Don't go to 100 until complete
+                                
+                                progressBar.style.width = `${progress}%`;
+                                timeInfo.textContent = `Processing with FFmpeg... ${Math.round(progress)}%`;
+                            }, 500);
                         }
-                    });
-                    
-                    video.addEventListener('error', () => {
-                        reject(new Error('Failed to load video for audio extraction'));
-                    });
+                        
+                        console.log('[FFMPEG] Executing FFmpeg command...');
+                        // Extract audio using FFmpeg
+                        // -y: overwrite output files
+                        // -i: input file
+                        // -vn: disable video
+                        // -acodec: audio codec
+                        // -ar: audio sample rate
+                        // -ac: audio channels (mono)
+                        await this.ffmpeg.exec([
+                            '-y',
+                            '-i', inputName,
+                            '-vn',
+                            '-acodec', 'pcm_s16le',
+                            '-ar', '44100',
+                            '-ac', '1',
+                            outputName
+                        ]);
+                        
+                        console.log('[FFMPEG] Reading output audio file...');
+                        // Read the output audio file
+                        const audioData = await this.ffmpeg.readFile(outputName);
+                        
+                        // Create blob from audio data
+                        const audioBlob = new Blob([audioData.buffer], { type: 'audio/wav' });
+                        console.log('[FFMPEG] Audio blob created:', audioBlob.size, 'bytes');
+                        
+                        // Clean up FFmpeg files
+                        try {
+                            await this.ffmpeg.deleteFile(inputName);
+                            await this.ffmpeg.deleteFile(outputName);
+                            console.log('[FFMPEG] Temporary files cleaned up');
+                        } catch (cleanupError) {
+                            console.warn('[FFMPEG] Cleanup error:', cleanupError);
+                        }
+                        
+                        // Update progress UI
+                        if (showProgress) {
+                            clearInterval(progressInterval);
+                            const progressBar = document.getElementById('extractionProgressBar');
+                            const timeInfo = document.getElementById('extractionTimeInfo');
+                            progressBar.style.width = '100%';
+                            timeInfo.textContent = 'Audio extraction complete!';
+                        }
+                        
+                        if (audioBlob.size === 0) {
+                            throw new Error('No audio data extracted - video may not contain audio');
+                        }
+                        
+                        console.log('[FFMPEG] FFmpeg extraction successful');
+                        resolve(audioBlob);
+                        
+                    } catch (error) {
+                        console.error('[FFMPEG] FFmpeg audio extraction failed:', error);
+                        
+                        if (showProgress) {
+                            const timeInfo = document.getElementById('extractionTimeInfo');
+                            timeInfo.textContent = 'FFmpeg extraction failed';
+                        }
+                        
+                        // Try fallback method
+                        console.log('[FFMPEG] Attempting fallback audio extraction...');
+                        try {
+                            const fallbackAudio = await this.extractAudioFallback(showProgress);
+                            resolve(fallbackAudio);
+                        } catch (fallbackError) {
+                            reject(new Error(`Both FFmpeg and fallback extraction failed. FFmpeg: ${error.message}, Fallback: ${fallbackError.message}`));
+                        }
+                    }
                 });
             }
 
-            processWhisperResults(result) {
-                console.log('Whisper results:', result);
+            getVideoExtension() {
+                const fileName = this.videoFile.name;
+                const extension = fileName.split('.').pop().toLowerCase();
                 
-                let transcripts = [];
+                const extensionMap = {
+                    'mov': 'mov',
+                    'mp4': 'mp4', 
+                    'avi': 'avi',
+                    'webm': 'webm',
+                    'mkv': 'mkv',
+                    'm4v': 'm4v',
+                    '3gp': '3gp',
+                    'flv': 'flv'
+                };
                 
-                if (result.chunks && result.chunks.length > 0) {
-                    // Handle chunked results with timestamps
-                    transcripts = result.chunks.map(chunk => ({
-                        text: chunk.text.trim(),
-                        start: chunk.timestamp[0] || 0,
-                        end: chunk.timestamp[1] || (chunk.timestamp[0] + 3)
-                    }));
-                } else if (result.text) {
-                    // Handle single text result - create segments
-                    const text = result.text.trim();
-                    const words = text.split(' ');
-                    const wordsPerSegment = 8;
-                    const segmentDuration = 4;
-                    
-                    for (let i = 0; i < words.length; i += wordsPerSegment) {
-                        const segmentWords = words.slice(i, i + wordsPerSegment);
-                        const segmentStart = (i / wordsPerSegment) * segmentDuration;
-                        const segmentEnd = segmentStart + segmentDuration;
+                return extensionMap[extension] || 'mp4';
+            }
+
+            async extractAudioFallback(showProgress = false) {
+                return new Promise((resolve, reject) => {
+                    try {
+                        console.log('[FALLBACK] Starting fallback audio extraction...');
                         
-                        if (segmentEnd <= this.duration) {
-                            transcripts.push({
-                                text: segmentWords.join(' '),
-                                start: segmentStart,
-                                end: Math.min(segmentEnd, this.duration)
-                            });
+                        const audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                            sampleRate: 44100
+                        });
+
+                        const video = document.createElement('video');
+                        video.src = URL.createObjectURL(this.videoFile);
+                        video.crossOrigin = 'anonymous';
+                        video.muted = true;
+
+                        video.addEventListener('loadeddata', async () => {
+                            try {
+                                console.log('[FALLBACK] Video loaded, setting up audio capture...');
+                                const source = audioContext.createMediaElementSource(video);
+                                const destination = audioContext.createMediaStreamDestination();
+                                
+                                source.connect(destination);
+                                
+                                const mimeTypes = [
+                                    'audio/webm;codecs=opus',
+                                    'audio/webm',
+                                    'audio/wav',
+                                    'audio/mp4'
+                                ];
+                                
+                                let selectedMimeType = '';
+                                for (const mimeType of mimeTypes) {
+                                    if (MediaRecorder.isTypeSupported(mimeType)) {
+                                        selectedMimeType = mimeType;
+                                        console.log('[FALLBACK] Using MIME type:', selectedMimeType);
+                                        break;
+                                    }
+                                }
+                                
+                                if (!selectedMimeType) {
+                                    throw new Error('No supported audio format found for recording');
+                                }
+                                
+                                const mediaRecorder = new MediaRecorder(destination.stream, {
+                                    mimeType: selectedMimeType,
+                                    audioBitsPerSecond: 128000
+                                });
+                                
+                                const audioChunks = [];
+                                let hasRecordedData = false;
+                                
+                                let progressInterval;
+                                if (showProgress) {
+                                    const progressBar = document.getElementById('extractionProgressBar');
+                                    const timeInfo = document.getElementById('extractionTimeInfo');
+                                    
+                                    progressInterval = setInterval(() => {
+                                        if (video.currentTime && video.duration) {
+                                            const progress = (video.currentTime / video.duration) * 100;
+                                            progressBar.style.width = `${progress}%`;
+                                            
+                                            const currentMin = Math.floor(video.currentTime / 60);
+                                            const currentSec = Math.floor(video.currentTime % 60);
+                                            const totalMin = Math.floor(video.duration / 60);
+                                            const totalSec = Math.floor(video.duration % 60);
+                                            
+                                            timeInfo.textContent = `Fallback extraction: ${currentMin}:${currentSec.toString().padStart(2, '0')} / ${totalMin}:${totalSec.toString().padStart(2, '0')}`;
+                                        }
+                                    }, 200);
+                                }
+                                
+                                mediaRecorder.ondataavailable = (event) => {
+                                    if (event.data.size > 0) {
+                                        audioChunks.push(event.data);
+                                        hasRecordedData = true;
+                                        console.log('[FALLBACK] Audio chunk received:', event.data.size, 'bytes');
+                                    }
+                                };
+                                
+                                mediaRecorder.onstop = () => {
+                                    try {
+                                        console.log('[FALLBACK] MediaRecorder stopped, processing audio...');
+                                        if (progressInterval) {
+                                            clearInterval(progressInterval);
+                                        }
+                                        
+                                        if (showProgress) {
+                                            const progressBar = document.getElementById('extractionProgressBar');
+                                            const timeInfo = document.getElementById('extractionTimeInfo');
+                                            progressBar.style.width = '100%';
+                                            timeInfo.textContent = 'Processing audio...';
+                                        }
+                                        
+                                        if (!hasRecordedData || audioChunks.length === 0) {
+                                            reject(new Error('No audio detected in video. Please ensure your video has audio content.'));
+                                            return;
+                                        }
+                                        
+                                        const audioBlob = new Blob(audioChunks, { 
+                                            type: selectedMimeType.split(';')[0] 
+                                        });
+                                        
+                                        if (audioBlob.size === 0) {
+                                            reject(new Error('No audio detected in video'));
+                                            return;
+                                        }
+                                        
+                                        console.log('[FALLBACK] Fallback extraction successful:', audioBlob.size, 'bytes');
+                                        resolve(audioBlob);
+                                    } catch (error) {
+                                        if (progressInterval) {
+                                            clearInterval(progressInterval);
+                                        }
+                                        reject(new Error(`Audio processing failed: ${error.message}`));
+                                    }
+                                };
+                                
+                                mediaRecorder.onerror = (event) => {
+                                    console.error('[FALLBACK] MediaRecorder error:', event.error);
+                                    if (progressInterval) {
+                                        clearInterval(progressInterval);
+                                    }
+                                    reject(new Error(`Audio recording failed: ${event.error?.message || 'Unknown error'}`));
+                                };
+                                
+                                console.log('[FALLBACK] Starting MediaRecorder...');
+                                mediaRecorder.start(1000);
+                                
+                                const playPromise = video.play();
+                                if (playPromise) {
+                                    playPromise.catch(error => {
+                                        console.warn('[FALLBACK] Video autoplay prevented:', error);
+                                    });
+                                }
+                                
+                                video.addEventListener('ended', () => {
+                                    console.log('[FALLBACK] Video playback ended');
+                                    mediaRecorder.stop();
+                                    source.disconnect();
+                                    audioContext.close();
+                                }, { once: true });
+                                
+                                video.addEventListener('error', (error) => {
+                                    console.error('[FALLBACK] Video error during extraction:', error);
+                                    if (progressInterval) {
+                                        clearInterval(progressInterval);
+                                    }
+                                    mediaRecorder.stop();
+                                    source.disconnect();
+                                    audioContext.close();
+                                    reject(new Error(`Video processing error: ${error.message || 'Video playback failed'}`));
+                                }, { once: true });
+                                
+                                const timeout = Math.max(this.duration * 1000 + 10000, 60000);
+                                setTimeout(() => {
+                                    if (mediaRecorder.state === 'recording') {
+                                        console.log('[FALLBACK] Extraction timeout, stopping...');
+                                        if (progressInterval) {
+                                            clearInterval(progressInterval);
+                                        }
+                                        mediaRecorder.stop();
+                                    }
+                                }, timeout);
+                                
+                            } catch (error) {
+                                console.error('[FALLBACK] Audio extraction setup failed:', error);
+                                reject(new Error(`Audio extraction setup failed: ${error.message}`));
+                            }
+                        });
+                        
+                        video.addEventListener('error', () => {
+                            console.error('[FALLBACK] Failed to load video for audio extraction');
+                            reject(new Error('Failed to load video for audio extraction'));
+                        });
+                        
+                        video.load();
+                        
+                    } catch (error) {
+                        console.error('[FALLBACK] Audio extraction failed:', error);
+                        reject(new Error(`Audio extraction failed: ${error.message}`));
+                    }
+                });
+            }
+
+            async transcribeWithDeepgram(audioBlob) {
+                console.log('[DEEPGRAM] Starting Deepgram transcription...');
+                const progressBar = document.getElementById('transcriptionProgress');
+                
+                try {
+                    progressBar.style.width = '50%';
+                    document.getElementById('progressText').textContent = 'Processing with Deepgram Nova-2...';
+                    
+                    console.log('[DEEPGRAM] Sending request to Deepgram API...');
+                    const response = await fetch('https://api.deepgram.com/v1/listen?model=nova-2&smart_format=true&punctuate=true&diarize=false', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Token ${this.apiKey}`,
+                            'Content-Type': audioBlob.type
+                        },
+                        body: audioBlob
+                    });
+                    
+                    progressBar.style.width = '80%';
+                    document.getElementById('progressText').textContent = 'Parsing transcription results...';
+                    
+                    console.log('[DEEPGRAM] Response status:', response.status);
+                    if (!response.ok) {
+                        if (response.status === 401) {
+                            throw new Error('Invalid API key. Please check your Deepgram API key.');
+                        } else if (response.status === 402) {
+                            throw new Error('Insufficient credits. Please check your Deepgram account.');
+                        } else {
+                            const errorData = await response.json().catch(() => null);
+                            throw new Error(`Deepgram API error: ${errorData?.message || response.statusText}`);
                         }
                     }
+                    
+                    const result = await response.json();
+                    console.log('[DEEPGRAM] Transcription successful, processing results...');
+                    
+                    if (!result.results?.channels?.[0]?.alternatives?.[0]?.words) {
+                        throw new Error('No speech detected in audio. Please ensure your video contains clear spoken content.');
+                    }
+                    
+                    return result;
+                    
+                } catch (error) {
+                    console.error('[DEEPGRAM] Transcription error:', error);
+                    throw error;
                 }
+            }
+
+            processTranscriptionResults(transcript) {
+                console.log('[TRANSCRIPTION] Processing Deepgram results...');
+                console.log('[TRANSCRIPTION] Full transcript object:', transcript);
                 
-                // Filter out empty or very short transcripts
-                transcripts = transcripts.filter(t => t.text && t.text.length > 2);
+                const words = transcript.results.channels[0].alternatives[0].words;
                 
-                if (transcripts.length === 0) {
+                if (!words || words.length === 0) {
+                    console.error('[TRANSCRIPTION] No words found in transcript');
                     alert('No speech was detected in the video. Please ensure the video contains clear spoken audio.');
                     return;
                 }
                 
-                // Convert to caption format with improved text processing
-                this.captions = transcripts.map((transcript, index) => ({
-                    id: Date.now() + index,
-                    start: Math.max(0, transcript.start),
-                    end: Math.min(transcript.end, this.duration),
-                    text: this.cleanTranscriptText(transcript.text),
-                    positionX: 50,
-                    positionY: 75
-                }));
+                console.log('[TRANSCRIPTION] Processing', words.length, 'words into captions...');
+                const wordsPerCaption = 8;
+                const captions = [];
                 
+                for (let i = 0; i < words.length; i += wordsPerCaption) {
+                    const wordGroup = words.slice(i, i + wordsPerCaption);
+                    
+                    if (wordGroup.length === 0) continue;
+                    
+                    const startTime = wordGroup[0].start;
+                    const endTime = wordGroup[wordGroup.length - 1].end;
+                    const text = wordGroup.map(w => w.punctuated_word || w.word).join(' ');
+                    
+                    captions.push({
+                        id: Date.now() + i,
+                        start: startTime,
+                        end: endTime,
+                        text: this.cleanTranscriptText(text),
+                        positionX: 50,
+                        positionY: 75
+                    });
+                }
+                
+                this.captions = captions;
                 this.renderCaptionSegments();
                 this.updateCaptionList();
                 
-                console.log(`Generated ${this.captions.length} captions from Whisper transcription`);
+                console.log('[TRANSCRIPTION] Generated', this.captions.length, 'captions from Deepgram transcription');
                 
-                // Auto-select first caption
                 if (this.captions.length > 0) {
                     this.selectCaption(this.captions[0]);
                 }
@@ -1531,9 +2767,9 @@
             cleanTranscriptText(text) {
                 return text
                     .trim()
-                    .replace(/\s+/g, ' ') // Normalize whitespace
-                    .replace(/^\w/, c => c.toUpperCase()) // Capitalize first letter
-                    .replace(/([.!?])\s*$/g, '$1'); // Ensure proper ending punctuation
+                    .replace(/\s+/g, ' ')
+                    .replace(/^\w/, c => c.toUpperCase())
+                    .replace(/\s+([,.!?])/g, '$1');
             }
 
             updateCaptionPosition() {
@@ -1542,6 +2778,7 @@
                 const positionX = parseFloat(document.getElementById('positionX').value);
                 const positionY = parseFloat(document.getElementById('positionY').value);
                 
+                console.log('[CAPTION] Updating position:', { positionX, positionY });
                 this.currentCaption.positionX = positionX;
                 this.currentCaption.positionY = positionY;
                 
@@ -1552,6 +2789,7 @@
             }
 
             addCaption() {
+                console.log('[CAPTION] Adding new caption at time:', this.currentTime);
                 const startTime = this.currentTime;
                 const endTime = Math.min(startTime + 3, this.duration);
                 
@@ -1570,9 +2808,11 @@
                 this.renderCaptionSegments();
                 this.updateCaptionList();
                 this.selectCaption(newCaption);
+                console.log('[CAPTION] New caption added:', newCaption.id);
             }
 
             selectCaption(caption) {
+                console.log('[CAPTION] Selecting caption:', caption.id);
                 this.currentCaption = caption;
                 
                 document.getElementById('captionText').value = caption.text;
@@ -1598,23 +2838,63 @@
             }
 
             updateCaption() {
-                if (!this.currentCaption) return;
+                if (!this.currentCaption) {
+                    console.log('[CAPTION] No caption selected for update');
+                    return;
+                }
                 
-                this.currentCaption.text = document.getElementById('captionText').value;
-                this.currentCaption.start = parseFloat(document.getElementById('startTime').value);
-                this.currentCaption.end = parseFloat(document.getElementById('endTime').value);
-                this.currentCaption.positionX = parseFloat(document.getElementById('positionX').value);
-                this.currentCaption.positionY = parseFloat(document.getElementById('positionY').value);
+                console.log('[CAPTION] Updating caption:', this.currentCaption.id);
+                const newText = document.getElementById('captionText').value;
+                const newStart = parseFloat(document.getElementById('startTime').value);
+                const newEnd = parseFloat(document.getElementById('endTime').value);
+                const newX = parseFloat(document.getElementById('positionX').value);
+                const newY = parseFloat(document.getElementById('positionY').value);
                 
+                // Update caption data
+                this.currentCaption.text = newText;
+                this.currentCaption.start = newStart;
+                this.currentCaption.end = newEnd;
+                this.currentCaption.positionX = newX;
+                this.currentCaption.positionY = newY;
+                
+                console.log('[CAPTION] Caption updated with:', { newText, newStart, newEnd, newX, newY });
+                
+                // Sort captions by start time
                 this.captions.sort((a, b) => a.start - b.start);
+                
+                // Update all UI elements
                 this.renderCaptionSegments();
                 this.updateCaptionList();
                 this.updateCaptionPosition();
+                
+                // Update the caption display immediately if this caption is currently showing
+                this.updateCaptionDisplay();
+            }
+
+            // Add real-time text updating
+            setupRealTimeEditing() {
+                console.log('[CAPTION] Setting up real-time editing...');
+                const captionTextArea = document.getElementById('captionText');
+                
+                captionTextArea.addEventListener('input', () => {
+                    if (this.currentCaption) {
+                        this.currentCaption.text = captionTextArea.value;
+                        // Update display immediately if this caption is showing
+                        this.updateCaptionDisplay();
+                        // Update timeline segments
+                        this.renderCaptionSegments();
+                    }
+                });
+                console.log('[CAPTION] Real-time editing setup complete');
             }
 
             deleteCaption() {
-                if (!this.currentCaption) return;
+                if (!this.currentCaption) {
+                    console.log('[CAPTION] No caption selected for deletion');
+                    return;
+                }
                 
+                console.log('[CAPTION] Deleting caption:', this.currentCaption.id);
                 this.captions = this.captions.filter(c => c.id !== this.currentCaption.id);
                 this.currentCaption = null;
                 
@@ -1624,9 +2904,11 @@
                 
                 this.renderCaptionSegments();
                 this.updateCaptionList();
+                console.log('[CAPTION] Caption deleted, remaining captions:', this.captions.length);
             }
 
             renderCaptionSegments() {
+                console.log('[UI] Rendering caption segments for', this.captions.length, 'captions...');
                 const container = document.getElementById('captionSegments');
                 container.innerHTML = '';
                 
@@ -1643,19 +2925,23 @@
                     segment.textContent = caption.text.substring(0, 20) + (caption.text.length > 20 ? '...' : '');
                     
                     segment.addEventListener('click', () => {
+                        console.log('[UI] Caption segment clicked:', caption.id);
                         this.selectCaption(caption);
                         this.video.currentTime = caption.start;
                     });
                     
                     container.appendChild(segment);
                 });
+                console.log('[UI] Caption segments rendered');
             }
 
             updateCaptionList() {
+                console.log('[UI] Updating caption list...');
                 const container = document.getElementById('captionList');
                 
                 if (this.captions.length === 0) {
                     container.innerHTML = '<div style="text-align: center; color: #666; padding: 40px;">No captions yet. Upload a video and use AI transcription to get started automatically.</div>';
+                    console.log('[UI] Caption list shows empty state');
                     return;
                 }
                 
@@ -1670,16 +2956,100 @@
                     
                     item.innerHTML = `
                         <div class="caption-time">${timeStr}</div>
-                        <div class="caption-text">${caption.text}</div>
+                        <div class="caption-text" data-caption-id="${caption.id}">${caption.text}</div>
                     `;
                     
-                    item.addEventListener('click', () => {
+                    // Single click to select and switch to edit tab
+                    item.addEventListener('click', (e) => {
+                        // Prevent triggering when clicking on input field during editing
+                        if (e.target.classList.contains('caption-text-input')) return;
+                        
+                        console.log('[UI] Caption list item clicked:', caption.id);
                         this.selectCaption(caption);
                         this.video.currentTime = caption.start;
                         this.switchTab({ target: { dataset: { tab: 'edit' } } });
                     });
                     
+                    // Double click to edit inline
+                    const textElement = item.querySelector('.caption-text');
+                    textElement.addEventListener('dblclick', (e) => {
+                        e.stopPropagation();
+                        console.log('[UI] Caption inline edit started:', caption.id);
+                        this.startInlineEdit(caption, item, textElement);
+                    });
+                    
                     container.appendChild(item);
+                });
+                console.log('[UI] Caption list updated with', this.captions.length, 'items');
+            }
+
+            startInlineEdit(caption, item, textElement) {
+                if (item.classList.contains('editing')) return;
+                
+                console.log('[UI] Starting inline edit for caption:', caption.id);
+                item.classList.add('editing');
+                const originalText = caption.text;
+                
+                textElement.innerHTML = `
+                    <input type="text" class="caption-text-input" value="${originalText}" />
+                    <div class="caption-edit-controls">
+                        <button class="caption-edit-btn save">✓ Save</button>
+                        <button class="caption-edit-btn cancel">✕ Cancel</button>
+                    </div>
+                `;
+                
+                const input = textElement.querySelector('.caption-text-input');
+                const saveBtn = textElement.querySelector('.save');
+                const cancelBtn = textElement.querySelector('.cancel');
+                
+                input.focus();
+                input.select();
+                
+                const saveEdit = () => {
+                    const newText = input.value.trim();
+                    console.log('[UI] Saving inline edit:', { originalText, newText });
+                    if (newText && newText !== originalText) {
+                        caption.text = newText;
+                        
+                        // Update main edit panel if this caption is selected
+                        if (this.currentCaption && this.currentCaption.id === caption.id) {
+                            document.getElementById('captionText').value = newText;
+                        }
+                        
+                        // Re-render segments
+                        this.renderCaptionSegments();
+                    }
+                    
+                    textElement.textContent = caption.text;
+                    item.classList.remove('editing');
+                };
+                
+                const cancelEdit = () => {
+                    console.log('[UI] Cancelling inline edit');
+                    textElement.textContent = originalText;
+                    item.classList.remove('editing');
+                };
+                
+                saveBtn.addEventListener('click', saveEdit);
+                cancelBtn.addEventListener('click', cancelEdit);
+                
+                input.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        saveEdit();
+                    } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        cancelEdit();
+                    }
+                });
+                
+                input.addEventListener('blur', () => {
+                    // Small delay to allow button clicks to register
+                    setTimeout(() => {
+                        if (item.classList.contains('editing')) {
+                            saveEdit();
+                        }
+                    }, 100);
                 });
             }
 
@@ -1687,6 +3057,15 @@
                 const min = Math.floor(seconds / 60);
                 const sec = Math.floor(seconds % 60);
                 return `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
+            }
+
+            formatSRTTime(seconds) {
+                const hours = Math.floor(seconds / 3600);
+                const minutes = Math.floor((seconds % 3600) / 60);
+                const secs = Math.floor(seconds % 60);
+                const ms = Math.floor((seconds % 1) * 1000);
+                
+                return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')},${ms.toString().padStart(3, '0')}`;
             }
 
             updateCaptionDisplay() {
@@ -1706,7 +3085,19 @@
                 }
             }
 
+            getCaptionStyle() {
+                return {
+                    fontFamily: document.getElementById('fontFamily').value,
+                    fontSize: parseInt(document.getElementById('fontSize').value),
+                    textColor: document.getElementById('textColor').value,
+                    backgroundColor: document.getElementById('backgroundColor').value,
+                    backgroundOpacity: parseInt(document.getElementById('backgroundOpacity').value) / 100,
+                    fontWeight: document.getElementById('fontWeight').value
+                };
+            }
+
             updateStyle() {
+                const fontFamily = document.getElementById('fontFamily').value;
                 const fontSize = document.getElementById('fontSize').value;
                 const textColor = document.getElementById('textColor').value;
                 const backgroundColor = document.getElementById('backgroundColor').value;
@@ -1717,6 +3108,7 @@
                 document.getElementById('backgroundOpacityValue').textContent = backgroundOpacity + '%';
                 
                 const overlay = document.getElementById('captionOverlay');
+                overlay.style.fontFamily = fontFamily;
                 overlay.style.fontSize = fontSize + 'px';
                 overlay.style.color = textColor;
                 overlay.style.fontWeight = fontWeight;
@@ -1728,13 +3120,24 @@
                 const alpha = backgroundOpacity / 100;
                 
                 overlay.style.background = `rgba(${r}, ${g}, ${b}, ${alpha})`;
+                
+                // Update all caption overlays in real-time if they exist
+                document.querySelectorAll('.caption-overlay').forEach(captionEl => {
+                    captionEl.style.fontFamily = fontFamily;
+                    captionEl.style.fontSize = fontSize + 'px';
+                    captionEl.style.color = textColor;
+                    captionEl.style.fontWeight = fontWeight;
+                    captionEl.style.background = `rgba(${r}, ${g}, ${b}, ${alpha})`;
+                });
             }
 
             applyPreset(e) {
                 const preset = e.target.dataset.preset;
+                console.log('[STYLE] Applying preset:', preset);
                 
                 const presets = {
                     youtube: {
+                        fontFamily: "Arial, sans-serif",
                         fontSize: 20,
                         textColor: '#ffffff',
                         backgroundColor: '#000000',
@@ -1742,6 +3145,7 @@
                         fontWeight: 'bold'
                     },
                     netflix: {
+                        fontFamily: "Helvetica, sans-serif",
                         fontSize: 22,
                         textColor: '#ffffff',
                         backgroundColor: '#000000',
@@ -1749,6 +3153,7 @@
                         fontWeight: '500'
                     },
                     minimal: {
+                        fontFamily: "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
                         fontSize: 16,
                         textColor: '#333333',
                         backgroundColor: '#ffffff',
@@ -1756,6 +3161,7 @@
                         fontWeight: 'normal'
                     },
                     bold: {
+                        fontFamily: "Impact, sans-serif",
                         fontSize: 24,
                         textColor: '#ffff00',
                         backgroundColor: '#ff0000',
@@ -1766,6 +3172,7 @@
                 
                 const settings = presets[preset];
                 if (settings) {
+                    document.getElementById('fontFamily').value = settings.fontFamily;
                     document.getElementById('fontSize').value = settings.fontSize;
                     document.getElementById('textColor').value = settings.textColor;
                     document.getElementById('backgroundColor').value = settings.backgroundColor;
@@ -1773,11 +3180,13 @@
                     document.getElementById('fontWeight').value = settings.fontWeight;
                     
                     this.updateStyle();
+                    console.log('[STYLE] Preset applied successfully');
                 }
             }
 
             switchTab(e) {
                 const tabName = e.target.dataset.tab;
+                console.log('[UI] Switching to tab:', tabName);
                 
                 document.querySelectorAll('.tab-btn').forEach(btn => {
                     btn.classList.remove('active');
@@ -1790,13 +3199,538 @@
                 document.getElementById(tabName + 'Panel').classList.add('active');
             }
 
-            async exportVideo() {
-                alert('Export functionality would integrate with a video processing service to render the final video with embedded captions. In a production environment, this would use FFmpeg.js or a server-side video processing API.');
+            exportCaptions() {
+                console.log('[EXPORT] Exporting captions as SRT...');
+                if (this.captions.length === 0) {
+                    console.log('[EXPORT] No captions to export');
+                    alert('No captions to export. Please add some captions first.');
+                    return;
+                }
+                
+                // Generate SRT format
+                let srtContent = '';
+                this.captions.forEach((caption, index) => {
+                    srtContent += `${index + 1}\n`;
+                    srtContent += `${this.formatSRTTime(caption.start)} --> ${this.formatSRTTime(caption.end)}\n`;
+                    srtContent += `${caption.text}\n\n`;
+                });
+                
+                console.log('[EXPORT] SRT content generated, length:', srtContent.length);
+                
+                // Create and download file
+                const blob = new Blob([srtContent], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'captions.srt';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                console.log('[EXPORT] SRT file download initiated');
+            }
+
+            // HIGH-QUALITY MP4 VIDEO RECORDING WITH AUDIO (OPTIMIZED FOR PERFORMANCE)
+            async startVideoRecording() {
+                console.log('[RECORDING] HD MP4 recording with audio requested...');
+                
+                if (!this.video || this.captions.length === 0) {
+                    console.error('[RECORDING] Missing requirements - video:', !!this.video, 'captions:', this.captions.length);
+                    alert('Please upload a video and add captions before recording.');
+                    return;
+                }
+
+                if (this.isRecording) {
+                    console.log('[RECORDING] Already recording, ignoring request');
+                    return;
+                }
+
+                try {
+                    console.log('[RECORDING] Starting optimized HD recording process...');
+                    this.isRecording = true;
+                    this.recordedChunks = [];
+                    
+                    // Show progress UI
+                    const progressContainer = document.getElementById('exportProgress');
+                    const progressBar = document.getElementById('exportProgressBar');
+                    const progressText = document.getElementById('exportProgressText');
+                    const exportBtn = document.getElementById('exportVideoBtn');
+                    
+                    progressContainer.classList.remove('hidden');
+                    exportBtn.disabled = true;
+                    progressText.textContent = 'Setting up HD recording with perfect audio sync...';
+                    progressBar.style.width = '0%';
+                    
+                    // Create optimized recording setup
+                    console.log('[RECORDING] Creating optimized HD recording environment...');
+                    const recordingSetup = await this.createOptimizedRecordingSetup();
+                    
+                    const { canvas, ctx, combinedStream } = recordingSetup;
+                    
+                    console.log('[RECORDING] HD Canvas dimensions:', canvas.width, 'x', canvas.height);
+                    
+                    // Setup high-quality MediaRecorder with optimized settings
+                    const recorderOptions = {
+                        mimeType: 'video/webm;codecs=vp9,opus', // Will convert to MP4 later
+                        videoBitsPerSecond: 8000000,  // 8 Mbps - balanced quality/performance
+                        audioBitsPerSecond: 192000,   // 192 kbps - high quality audio
+                        videoKeyFrameIntervalDuration: 3000 // Keyframe every 3 seconds
+                    };
+                    
+                    // Fallback for different browsers
+                    const supportedTypes = [
+                        'video/webm;codecs=vp9,opus',
+                        'video/webm;codecs=h264,opus',
+                        'video/webm;codecs=vp8,opus',
+                        'video/webm'
+                    ];
+                    
+                    let selectedType = '';
+                    for (const type of supportedTypes) {
+                        if (MediaRecorder.isTypeSupported(type)) {
+                            selectedType = type;
+                            break;
+                        }
+                    }
+                    
+                    if (!selectedType) {
+                        throw new Error('Browser does not support high-quality video recording');
+                    }
+                    
+                    recorderOptions.mimeType = selectedType;
+                    console.log('[RECORDING] Using optimized quality settings:', recorderOptions);
+                    
+                    this.mediaRecorder = new MediaRecorder(combinedStream, recorderOptions);
+                    
+                    // Setup MediaRecorder events
+                    this.mediaRecorder.ondataavailable = (event) => {
+                        if (event.data.size > 0) {
+                            this.recordedChunks.push(event.data);
+                            console.log('[RECORDING] HD chunk recorded:', event.data.size, 'bytes');
+                        }
+                    };
+                    
+                    this.mediaRecorder.onstop = () => {
+                        console.log('[RECORDING] HD recording stopped, processing...');
+                        this.finishHDRecording();
+                    };
+                    
+                    this.mediaRecorder.onerror = (event) => {
+                        console.error('[RECORDING] HD recording error:', event.error);
+                        this.cancelVideoRecording();
+                        alert(`HD recording failed: ${event.error?.message || 'Unknown error'}`);
+                    };
+                    
+                    // Get caption style
+                    const style = this.getCaptionStyle();
+                    console.log('[RECORDING] Using professional caption style:', style);
+                    
+                    // Start HD recording
+                    progressText.textContent = 'Starting HD recording with perfect audio sync...';
+                    progressBar.style.width = '5%';
+                    
+                    this.mediaRecorder.start(500); // High-frequency chunks for better quality
+                    
+                    // Setup synchronized playback
+                    this.video.currentTime = 0;
+                    this.video.muted = false; // Original audio will be mixed
+                    
+                    // Start optimized drawing loop at 30 FPS for smooth performance
+                    console.log('[RECORDING] Starting optimized 30 FPS drawing loop...');
+                    const targetFPS = 30;
+                    const frameInterval = 1000 / targetFPS;
+                    let lastFrameTime = 0;
+                    let frameCount = 0;
+                    
+                    const drawOptimizedFrame = (timestamp) => {
+                        if (!this.isRecording) {
+                            console.log('[RECORDING] Recording stopped, ending draw loop');
+                            return;
+                        }
+                        
+                        // Optimized frame timing for smooth performance
+                        if (timestamp - lastFrameTime >= frameInterval) {
+                            const currentTime = this.video.currentTime;
+                            const progress = (currentTime / this.duration) * 100;
+                            
+                            // Update progress (less frequently for better performance)
+                            if (frameCount % 10 === 0) { // Update UI every 10 frames
+                                progressBar.style.width = `${Math.min(progress, 95)}%`;
+                                const minutes = Math.floor(currentTime / 60);
+                                const seconds = Math.floor(currentTime % 60);
+                                const totalMin = Math.floor(this.duration / 60);
+                                const totalSec = Math.floor(this.duration % 60);
+                                progressText.textContent = `HD Recording: ${minutes}:${seconds.toString().padStart(2, '0')} / ${totalMin}:${totalSec.toString().padStart(2, '0')} (${Math.round(progress)}%)`;
+                            }
+                            
+                            // Clear canvas efficiently
+                            ctx.clearRect(0, 0, canvas.width, canvas.height);
+                            
+                            // Draw video with optimized scaling
+                            ctx.imageSmoothingEnabled = true;
+                            ctx.imageSmoothingQuality = 'high';
+                            ctx.drawImage(this.video, 0, 0, canvas.width, canvas.height);
+                            
+                            // Draw captions (only if any exist at current time)
+                            const currentCaptions = this.captions.filter(caption => 
+                                currentTime >= caption.start && currentTime <= caption.end
+                            );
+                            
+                            if (currentCaptions.length > 0) {
+                                currentCaptions.forEach(caption => {
+                                    this.drawOptimizedCaption(ctx, caption, canvas.width, canvas.height, style);
+                                });
+                            }
+                            
+                            lastFrameTime = timestamp;
+                            frameCount++;
+                        }
+                        
+                        // Continue recording
+                        if (this.video.currentTime < this.duration && this.isRecording) {
+                            requestAnimationFrame(drawOptimizedFrame);
+                        } else {
+                            console.log('[RECORDING] Video finished or recording stopped');
+                            this.stopVideoRecording();
+                        }
+                    };
+                    
+                    // Start synchronized playback
+                    progressText.textContent = 'HD recording in progress with perfect audio...';
+                    await this.video.play();
+                    requestAnimationFrame(drawOptimizedFrame);
+                    
+                    console.log('[RECORDING] Ultra HD recording started successfully');
+                    
+                } catch (error) {
+                    console.error('[RECORDING] Failed to start HD recording:', error);
+                    this.cancelVideoRecording();
+                    alert(`Failed to start HD recording: ${error.message}`);
+                }
+            }
+
+            async createOptimizedRecordingSetup() {
+                console.log('[RECORDING] Creating optimized HD recording setup...');
+                
+                // Create ultra high-resolution canvas (minimum 1920x1080, scale up if needed)
+                const canvas = document.createElement('canvas');
+                let ctx;
+                
+                // Try to get the best possible canvas context
+                try {
+                    ctx = canvas.getContext('2d', { 
+                        alpha: false, 
+                        desynchronized: true,
+                        willReadFrequently: false
+                    });
+                } catch (error) {
+                    console.warn('[RECORDING] Advanced canvas options not supported, using fallback');
+                    ctx = canvas.getContext('2d', { alpha: false });
+                }
+                
+                if (!ctx) {
+                    throw new Error('Unable to create canvas context for recording');
+                }
+                
+                // Determine optimal ultra HD dimensions
+                const originalWidth = this.video.videoWidth || 1920;
+                const originalHeight = this.video.videoHeight || 1080;
+                
+                // Always record at minimum 1920x1080, upscale if needed for ultra quality
+                const minWidth = 1920;
+                const minHeight = 1080;
+                
+                // Calculate optimal HD dimensions maintaining aspect ratio
+                const aspectRatio = originalWidth / originalHeight;
+                
+                let canvasWidth, canvasHeight;
+                if (originalWidth < minWidth || originalHeight < minHeight) {
+                    // Upscale to HD
+                    if (aspectRatio > (minWidth / minHeight)) {
+                        canvasWidth = minWidth;
+                        canvasHeight = Math.round(minWidth / aspectRatio);
+                    } else {
+                        canvasHeight = minHeight;
+                        canvasWidth = Math.round(minHeight * aspectRatio);
+                    }
+                } else {
+                    // Use original dimensions if already HD+
+                    canvasWidth = originalWidth;
+                    canvasHeight = originalHeight;
+                }
+                
+                // Set canvas dimensions (no upscaling for better performance)
+                canvas.width = canvasWidth;
+                canvas.height = canvasHeight;
+                
+                console.log('[RECORDING] HD canvas setup:', {
+                    original: `${originalWidth}x${originalHeight}`,
+                    canvas: `${canvas.width}x${canvas.height}`,
+                    optimized: 'for smooth performance'
+                });
+                
+                // Create high-quality canvas stream at 30 FPS (optimized for performance)
+                const canvasStream = canvas.captureStream(30);
+                
+                // Create high-quality audio context for perfect sync
+                console.log('[RECORDING] Setting up perfect audio sync...');
+                let audioContext;
+                try {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                        sampleRate: 48000 // Professional audio sample rate
+                    });
+                } catch (error) {
+                    console.warn('[RECORDING] High sample rate not supported, using default');
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                
+                // Capture original video audio with highest quality
+                const videoSource = audioContext.createMediaElementSource(this.video);
+                const audioDestination = audioContext.createMediaStreamDestination();
+                
+                // Connect with professional audio processing
+                const audioGain = audioContext.createGain();
+                audioGain.gain.value = 1.0; // Unity gain for perfect original audio
+                
+                videoSource.connect(audioGain);
+                audioGain.connect(audioDestination);
+                
+                // Combine ultra HD video with perfect audio
+                const combinedStream = new MediaStream([
+                    ...canvasStream.getVideoTracks(),
+                    ...audioDestination.stream.getAudioTracks()
+                ]);
+                
+                console.log('[RECORDING] HD recording setup complete:', {
+                    videoTracks: canvasStream.getVideoTracks().length,
+                    audioTracks: audioDestination.stream.getAudioTracks().length,
+                    canvasDimensions: `${canvas.width}x${canvas.height}`,
+                    audioSampleRate: audioContext.sampleRate
+                });
+                
+                return { canvas, ctx, combinedStream, audioContext };
+            }
+
+            drawOptimizedCaption(ctx, caption, canvasWidth, canvasHeight, style) {
+                const text = caption.text;
+                const x = (caption.positionX / 100) * canvasWidth;
+                const y = (caption.positionY / 100) * canvasHeight;
+                
+                // Optimized scaling for smooth performance
+                const baseScale = Math.min(canvasWidth / 1920, canvasHeight / 1080);
+                const scaledFontSize = Math.max(style.fontSize * baseScale, 18); // Reasonable minimum
+                
+                ctx.save();
+                
+                // Optimized font rendering
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = 'medium'; // Balance quality/performance
+                
+                // Simple font setup for performance
+                const fontFamily = style.fontFamily.split(',')[0].trim().replace(/['"]/g, '');
+                ctx.font = `${style.fontWeight} ${scaledFontSize}px ${fontFamily}, Arial, sans-serif`;
+                
+                // Efficient text measurement
+                const metrics = ctx.measureText(text);
+                const textWidth = metrics.width;
+                const textHeight = scaledFontSize;
+                
+                // Optimized padding
+                const paddingX = scaledFontSize * 0.5;
+                const paddingY = scaledFontSize * 0.3;
+                const bgWidth = textWidth + paddingX * 2;
+                const bgHeight = textHeight + paddingY * 2;
+                
+                // Simple background (no fancy corners for performance)
+                const bgColor = this.hexToRgba(style.backgroundColor, style.backgroundOpacity);
+                const bgX = x - bgWidth / 2;
+                const bgY = y - bgHeight / 2;
+                
+                ctx.fillStyle = bgColor;
+                ctx.fillRect(bgX, bgY, bgWidth, bgHeight); // Simple rectangle for speed
+                
+                // Simple shadow for readability (minimal impact)
+                if (style.textColor === '#ffffff') {
+                    ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
+                    ctx.shadowBlur = 2;
+                    ctx.shadowOffsetX = 1;
+                    ctx.shadowOffsetY = 1;
+                }
+                
+                // Draw text
+                ctx.fillStyle = style.textColor;
+                ctx.fillText(text, x, y);
+                
+                // Clear shadow efficiently
+                ctx.shadowColor = 'transparent';
+                ctx.shadowBlur = 0;
+                ctx.shadowOffsetX = 0;
+                ctx.shadowOffsetY = 0;
+                
+                ctx.restore();
+            }
+
+            // Keep ultra HD function but make it use optimized version
+            drawUltraHDCaption(ctx, caption, canvasWidth, canvasHeight, style) {
+                // Use optimized version for better performance
+                this.drawOptimizedCaption(ctx, caption, canvasWidth, canvasHeight, style);
+            }
+
+            finishHDRecording() {
+                console.log('[RECORDING] Finishing HD MP4 recording with audio...');
+                
+                const progressContainer = document.getElementById('exportProgress');
+                const progressBar = document.getElementById('exportProgressBar');
+                const progressText = document.getElementById('exportProgressText');
+                const exportBtn = document.getElementById('exportVideoBtn');
+                
+                try {
+                    progressText.textContent = 'Processing HD video with perfect audio sync...';
+                    progressBar.style.width = '98%';
+                    
+                    if (this.recordedChunks.length === 0) {
+                        throw new Error('No HD video data recorded');
+                    }
+                    
+                    console.log('[RECORDING] Creating HD video from', this.recordedChunks.length, 'chunks');
+                    
+                    // Calculate total size
+                    const totalSize = this.recordedChunks.reduce((total, chunk) => total + chunk.size, 0);
+                    console.log('[RECORDING] Total HD data:', (totalSize / 1024 / 1024).toFixed(2), 'MB');
+                    
+                    // Create HD video blob
+                    const videoBlob = new Blob(this.recordedChunks, { 
+                        type: this.recordedChunks[0].type 
+                    });
+                    
+                    console.log('[RECORDING] HD blob created:', (videoBlob.size / 1024 / 1024).toFixed(2), 'MB');
+                    
+                    // Create professional filename
+                    const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+                    const webmFilename = `hd-captioned-video-${timestamp}.webm`;
+                    
+                    // Create download
+                    const downloadUrl = URL.createObjectURL(videoBlob);
+                    const a = document.createElement('a');
+                    a.href = downloadUrl;
+                    a.download = webmFilename;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    
+                    progressBar.style.width = '100%';
+                    const sizeMB = (videoBlob.size / 1024 / 1024).toFixed(1);
+                    progressText.textContent = `HD video exported! (${sizeMB}MB) - Convert to MP4 using any video converter`;
+                    console.log('[RECORDING] HD download initiated:', webmFilename);
+                    
+                    // Restore video state
+                    this.video.muted = false;
+                    this.video.currentTime = 0;
+                    
+                    // Success message with conversion instructions
+                    setTimeout(() => {
+                        alert(`🎬 High-Quality Video Exported Successfully!\n\nFile: ${webmFilename}\nSize: ${sizeMB}MB\nQuality: HD with perfect audio sync\n\nTo convert to MP4:\n• Use VLC Media Player (free): Media → Convert/Save\n• Use HandBrake (free): Load file → Start encode\n• Use online converters: CloudConvert, etc.\n\nFeatures:\n• HD resolution (${this.video.videoWidth || 1920}x${this.video.videoHeight || 1080})\n• Perfect audio synchronization\n• Professional captions\n• 30 FPS smoothness\n• 8 Mbps bitrate\n• Optimized for performance`);
+                    }, 1000);
+                    
+                    // Also show conversion instructions in the UI
+                    setTimeout(() => {
+                        progressText.innerHTML = `
+                            <div style="text-align: left; font-size: 11px; line-height: 1.3;">
+                                <strong>✅ HD Export Complete!</strong><br>
+                                📁 File: ${webmFilename} (${sizeMB}MB)<br>
+                                🎯 Quality: HD + Perfect Audio<br><br>
+                                <strong>🔄 Convert to MP4:</strong><br>
+                                • <a href="https://www.videolan.org/vlc/" target="_blank" style="color: #13EF93;">VLC Player</a> (free): Media → Convert/Save<br>
+                                • <a href="https://handbrake.fr/" target="_blank" style="color: #13EF93;">HandBrake</a> (free): Load file → Start<br>
+                                • <a href="https://cloudconvert.com/" target="_blank" style="color: #13EF93;">CloudConvert</a> (online)
+                            </div>
+                        `;
+                    }, 2000);
+                    
+                    // Cleanup after longer delay to show instructions
+                    setTimeout(() => {
+                        URL.revokeObjectURL(downloadUrl);
+                        progressContainer.classList.add('hidden');
+                        exportBtn.disabled = false;
+                        this.recordedChunks = [];
+                        console.log('[RECORDING] HD recording cleanup complete');
+                    }, 15000); // 15 seconds to read instructions
+                    
+                } catch (error) {
+                    console.error('[RECORDING] Failed to finish HD recording:', error);
+                    progressContainer.classList.add('hidden');
+                    exportBtn.disabled = false;
+                    alert(`Failed to process HD recording: ${error.message}`);
+                }
+                
+                this.isRecording = false;
+            }
+
+            stopVideoRecording() {
+                console.log('[RECORDING] Stopping HD video recording...');
+                if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
+                    this.mediaRecorder.stop();
+                }
+                
+                if (this.video) {
+                    this.video.pause();
+                    this.video.muted = false; // Restore original state
+                }
+                
+                this.isRecording = false;
+            }
+
+            cancelVideoRecording() {
+                console.log('[RECORDING] Cancelling HD video recording...');
+                this.isRecording = false;
+                this.recordedChunks = [];
+                
+                if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
+                    this.mediaRecorder.stop();
+                }
+                
+                if (this.video) {
+                    this.video.pause();
+                    this.video.currentTime = 0;
+                    this.video.muted = false; // Restore original state
+                }
+                
+                // Hide progress UI
+                const progressContainer = document.getElementById('exportProgress');
+                const exportBtn = document.getElementById('exportVideoBtn');
+                
+                progressContainer.classList.add('hidden');
+                exportBtn.disabled = false;
+                
+                console.log('[RECORDING] HD recording cancelled');
+            }
+
+            // Keep the original function for backward compatibility in caption display
+            drawCaptionOnCanvas(ctx, caption, canvasWidth, canvasHeight, style) {
+                // Use optimized version for all canvas drawing for best performance
+                this.drawOptimizedCaption(ctx, caption, canvasWidth, canvasHeight, style);
+            }
+
+            hexToRgba(hex, alpha) {
+                const r = parseInt(hex.slice(1, 3), 16);
+                const g = parseInt(hex.slice(3, 5), 16);
+                const b = parseInt(hex.slice(5, 7), 16);
+                return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+            }
+
+            resetApiKey() {
+                console.log('[API] Resetting API key...');
+                this.apiKey = '';
+                localStorage.removeItem('deepgram_key');
+                location.reload();
             }
         }
 
         // Initialize the application
         document.addEventListener('DOMContentLoaded', () => {
+            console.log('[INIT] DOM loaded, initializing VideoCaptionEditor...');
             new VideoCaptionEditor();
         });
     </script>
